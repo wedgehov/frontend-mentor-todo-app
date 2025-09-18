@@ -1,0 +1,35 @@
+# F# / .NET
+**/[Bb]in
+**/[Oo]bj
+*.user
+*.fsproj.user
+
+# Fable
+.fable/
+fable_modules/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log
+pnpm-debug.log
+
+# Vite
+.vite/
+dist/
+
+# IDEs & Editors
+.idea/
+.vs/
+.vscode/
+
+# OS generated files
+.DS_Store
+._*
+Thumbs.db
+
+# Logs
+logs
+*.log
+
+.fake
