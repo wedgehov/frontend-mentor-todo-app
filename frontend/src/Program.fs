@@ -9,7 +9,6 @@ open Fable.Core
 open Fable.Core.JsInterop
 
 open Fable.SimpleHttp
-open Fable.SimpleHttp.Types
 
 // =============== Domain ===============
 
@@ -110,7 +109,6 @@ let encodeNewTodo (t: NewTodo) =
 
 module Api =
   open Fable.SimpleHttp
-  open Fable.SimpleHttp.Types
 
   let private is2xx (status:int) = status >= 200 && status < 300
   let private bodyOrEmpty (s: string) = if isNull s then "" else s
