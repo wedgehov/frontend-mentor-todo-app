@@ -6,7 +6,10 @@ import fable from "vite-plugin-fable";
 export default defineConfig({
   plugins: [
     // Fable must be configured to run before the React plugin
-    fable({ fsproj: "src/src.fsproj" }),
+    fable({
+      fsproj: "src/src.fsproj",
+      failOnFirstError: true,
+    }),
     react(),
   ],
 });
