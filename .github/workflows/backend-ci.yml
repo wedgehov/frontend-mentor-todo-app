@@ -1,0 +1,54 @@
+name: Backend CI
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*.*.*'
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-and-push-image:
+    name: Build and Push Backend Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # Required to push to GitHub Packages/GHCR
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/todo-backend
+          tags: |
+            # tag 'latest' for default branch
+            type=raw,value=latest,enable={{is_default_branch}}
+            # tag with the git tag value
+            type=ref,event=tag
+            # tag with the commit sha
+            type=sha,prefix=,format=short
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
