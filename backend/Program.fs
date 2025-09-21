@@ -87,11 +87,11 @@ let app = builder.Build()
 ensureTables ()
 
 // Health + routes
-app.MapGet ("/api/health",                 Func<IResult>(fun _ -> Results.Text("OK")))  |> ignore
-app.MapGet ("/api/todos",                  Func<IResult>(getTodos))                     |> ignore
-app.MapPost("/api/todos",                  Func<NewTodo, IResult>(postTodo))            |> ignore
-app.MapPut ("/api/todos/{id:int}/toggle",  Func<int, IResult>(toggleTodo))              |> ignore
-app.MapDelete("/api/todos/{id:int}",       Func<int, IResult>(deleteTodo))              |> ignore
-app.MapDelete("/api/todos/completed",      Func<IResult>(clearCompleted))               |> ignore
+app.MapGet ("/api/health",                 Func<IResult>(fun () -> Results.Text "OK"))      |> ignore
+app.MapGet ("/api/todos",                  Func<IResult>(getTodos))                         |> ignore
+app.MapPost("/api/todos",                  Func<NewTodo, IResult>(postTodo))               |> ignore
+app.MapPut ("/api/todos/{id:int}/toggle",  Func<int, IResult>(toggleTodo))                  |> ignore
+app.MapDelete("/api/todos/{id:int}",       Func<int, IResult>(deleteTodo))                   |> ignore
+app.MapDelete("/api/todos/completed",      Func<IResult>(clearCompleted))                   |> ignore
 
 app.Run()

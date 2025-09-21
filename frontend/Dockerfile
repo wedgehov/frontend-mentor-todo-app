@@ -2,8 +2,8 @@
 FROM node:22-alpine AS build
 WORKDIR /app
 
-# Install .NET SDK 8, which is required by vite-plugin-fable to build its daemon
-RUN apk add --no-cache dotnet8-sdk
+# Install .NET SDK 9, which is required by vite-plugin-fable to build its daemon
+RUN apk add --no-cache dotnet9-sdk
 
 # Copy package files and install dependencies
 COPY package.json package-lock.json ./
