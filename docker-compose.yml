@@ -40,6 +40,8 @@ services:
     restart: always
     ports:
       - "5173:80" # Map container's Nginx port 80 to host's 5173
+    environment:
+      - API_URL=http://backend:8080
     depends_on:
       - backend
 

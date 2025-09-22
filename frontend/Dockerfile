@@ -19,15 +19,20 @@ RUN npm run build
 FROM nginx:alpine
 WORKDIR /usr/share/nginx/html
 
+# Install 'gettext' which provides the 'envsubst' utility for variable substitution
+RUN apk add --no-cache gettext
+
 # Remove default Nginx content
 RUN rm -rf ./*
 
 # Copy built assets from the build stage
 COPY --from=build /app/dist .
 
-# Copy our custom Nginx configuration to overwrite the default
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Copy our custom Nginx configuration template and the entrypoint script
+COPY nginx.conf /etc/nginx/conf.d/default.conf.template
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
 
 EXPOSE 80
 
-CMD ["nginx", "-g", "daemon off;"]
+ENTRYPOINT ["/docker-entrypoint.sh"]
