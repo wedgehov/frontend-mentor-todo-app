@@ -30,9 +30,9 @@ COPY --from=build /app/dist .
 
 # Copy our custom Nginx configuration template and the entrypoint script
 COPY nginx.conf /etc/nginx/conf.d/default.conf.template
-COPY docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
+COPY custom-entrypoint.sh /custom-entrypoint.sh
+RUN chmod +x /custom-entrypoint.sh
 
 EXPOSE 80
 
-ENTRYPOINT ["/docker-entrypoint.sh"]
+ENTRYPOINT ["/custom-entrypoint.sh"]
