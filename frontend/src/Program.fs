@@ -312,7 +312,7 @@ let view (model: Model) (dispatch: Msg -> unit) =
                       prop.children [
                         Html.button [
                           prop.className (
-                            if todo.Completed then "w-6 h-6 rounded-full flex items-center justify-center bg-gradient-1"
+                            if todo.Completed then "w-6 h-6 rounded-full flex items-center justify-center bg-gradient-to-br from-gradient-1-left to-gradient-1-right"
                             else if isDark then "w-6 h-6 rounded-full flex items-center justify-center border border-purple-800"
                             else "w-6 h-6 rounded-full flex items-center justify-center border border-gray-300"
                           )

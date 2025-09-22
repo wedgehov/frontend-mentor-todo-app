@@ -19,8 +19,12 @@
 
   --color-blue-500: hsl(220, 98%, 61%);
 
-  --color-gradient-1: linear-gradient(135deg,hsl(192, 100%, 67%), hsl(280, 87%, 65%));
-  --color-gradient-2: linear-gradient(135deg,hsl(254, 85%, 40%), hsl(307, 64%, 39%));
+  --color-gradient-1-left: hsl(192, 100%, 67%);
+  --color-gradient-1-right: hsl(280, 87%, 65%);
+
+  --color-gradient-2-left: hsl(254, 85%, 40%);
+  --color-gradient-2-right: hsl(307, 64%, 39%);
+
 }
 
 
