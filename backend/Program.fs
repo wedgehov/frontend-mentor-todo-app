@@ -1,97 +1,261 @@
+module Backend.Program
+
 open System
-open System.Text.Json
+open System.Data
+open System.Data.Common
+open System.Threading.Tasks
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
-open Microsoft.AspNetCore.Http.Json
+open Giraffe
 open Npgsql
 
-// DTOs
-type Todo    = { Id: int; Text: string; Completed: bool }
-type NewTodo = { Text: string }
+// =====================
+// DTOs (wire format)
+// =====================
 
-let builder = WebApplication.CreateBuilder()
+[<CLIMutable>]
+type Todo =
+    { id        : int
+      text      : string
+      completed : bool }
 
-// Option A: explicit type for JSON options (fixes FS0072)
-let configureJson (o: JsonOptions) =
-    o.SerializerOptions.PropertyNamingPolicy <- JsonNamingPolicy.CamelCase
-    o.SerializerOptions.PropertyNameCaseInsensitive <- true
+[<CLIMutable>]
+type NewTodo = { text : string }
 
-builder.Services.Configure<JsonOptions>(configureJson) |> ignore
+[<CLIMutable>]
+type UpdateTodo =
+    { text      : string option
+      completed : bool   option }
 
-// Connection + data source (keeps a pool for the app lifetime)
-let cfg = builder.Configuration
-let connStr = cfg.GetConnectionString("DefaultConnection")
-let dataSource = NpgsqlDataSourceBuilder(connStr).Build()
+// =====================
+// DB helpers
+// =====================
 
-// Idempotent startup migration (synchronous)
-let ensureTables () =
-    use cmd = dataSource.CreateCommand("""
-        CREATE TABLE IF NOT EXISTS todos (
-            id SERIAL PRIMARY KEY,
-            text VARCHAR(255) NOT NULL,
-            completed BOOLEAN NOT NULL DEFAULT FALSE
+let ensureTables (ds : NpgsqlDataSource) = task {
+    use! conn = ds.OpenConnectionAsync()
+    use cmd = conn.CreateCommand()
+    cmd.CommandText <- """
+        create table if not exists todos (
+            id serial primary key,
+            "text"     text    not null,
+            completed  boolean not null default false
         );
-        CREATE INDEX IF NOT EXISTS ix_todos_completed ON todos(completed);
-    """)
-    cmd.ExecuteNonQuery() |> ignore
+        -- idempotent guards
+        alter table if exists todos add column if not exists "text" text not null default '';
+        alter table if exists todos add column if not exists completed boolean not null default false;
+    """
+    let! _ = cmd.ExecuteNonQueryAsync()
+    return ()
+}
 
-// Handlers (synchronous: simple + avoids task CE issues)
-let getTodos () : IResult =
-    use cmd = dataSource.CreateCommand("select id, text, completed from todos order by id;")
-    use r = cmd.ExecuteReader()
-    let acc = ResizeArray<Todo>()
-    while r.Read() do
-        acc.Add({ Id = r.GetInt32(0); Text = r.GetString(1); Completed = r.GetBoolean(2) })
-    Results.Ok(acc)
+let private readTodo (reader : DbDataReader) : Todo =
+    { id        = reader.GetInt32(0)
+      text      = reader.GetString(1)
+      completed = reader.GetBoolean(2) }
 
-let postTodo (todo: NewTodo) : IResult =
-    if String.IsNullOrWhiteSpace(todo.Text) then
-        Results.BadRequest("Text is required")
+let getAllTodos (ds : NpgsqlDataSource) = task {
+    use! conn = ds.OpenConnectionAsync()
+    use cmd = conn.CreateCommand()
+    cmd.CommandText <- "select id, \"text\" as text, completed from todos order by id;"
+    use! reader = cmd.ExecuteReaderAsync(CommandBehavior.SequentialAccess)
+    let results = ResizeArray<Todo>()
+    while reader.Read() do
+        results.Add(readTodo reader)
+    return List.ofSeq results
+}
+
+let insertTodo (ds : NpgsqlDataSource) (textValue : string) = task {
+    use! conn = ds.OpenConnectionAsync()
+    use cmd = conn.CreateCommand()
+    cmd.CommandText <- "insert into todos (\"text\") values ($1) returning id, \"text\" as text, completed;"
+    cmd.Parameters.AddWithValue(textValue) |> ignore
+    use! reader = cmd.ExecuteReaderAsync()
+    let! _ = reader.ReadAsync()
+    return readTodo reader
+}
+
+let updateTodo (ds : NpgsqlDataSource) (id : int) (patch : UpdateTodo) = task {
+    use! conn = ds.OpenConnectionAsync()
+    use cmd = conn.CreateCommand()
+
+    let setters = ResizeArray<string>()
+    let values  = ResizeArray<obj>()
+
+    match patch.text with
+    | Some t ->
+        setters.Add("\"text\" = $1")
+        values.Add(box t)
+    | None -> ()
+
+    match patch.completed with
+    | Some c ->
+        let pos = values.Count + 1
+        setters.Add(sprintf "completed = $%d" pos)
+        values.Add(box c)
+    | None -> ()
+
+    if setters.Count = 0 then
+        // nothing to update -> return current row if exists
+        use cmd2 = conn.CreateCommand()
+        cmd2.CommandText <- "select id, \"text\" as text, completed from todos where id = $1;"
+        cmd2.Parameters.AddWithValue(id) |> ignore
+        use! reader = cmd2.ExecuteReaderAsync()
+        let! has = reader.ReadAsync()
+        if not has then return None
+        else return Some (readTodo reader)
     else
-        use cmd = dataSource.CreateCommand(
-            "insert into todos(text, completed) values ($1, false) returning id, text, completed;")
-        cmd.Parameters.AddWithValue(todo.Text) |> ignore
-        use r = cmd.ExecuteReader()
-        if not (r.Read()) then Results.Problem("Insert failed")
+        let setClause = String.concat ", " setters
+        cmd.CommandText <-
+            sprintf "update todos set %s where id = $%d returning id, \"text\" as text, completed;"
+                    setClause (values.Count + 1)
+
+        for v in values do cmd.Parameters.AddWithValue(v) |> ignore
+        cmd.Parameters.AddWithValue(id) |> ignore
+
+        use! reader = cmd.ExecuteReaderAsync()
+        let! has = reader.ReadAsync()
+        if not has then return None
+        else return Some (readTodo reader)
+}
+
+let deleteTodo (ds : NpgsqlDataSource) (id : int) = task {
+    use! conn = ds.OpenConnectionAsync()
+    use cmd = conn.CreateCommand()
+    cmd.CommandText <- "delete from todos where id = $1;"
+    cmd.Parameters.AddWithValue(id) |> ignore
+    let! n = cmd.ExecuteNonQueryAsync()
+    return n > 0
+}
+
+let toggleTodo (ds : NpgsqlDataSource) (id : int) = task {
+    use! conn = ds.OpenConnectionAsync()
+    use cmd = conn.CreateCommand()
+    cmd.CommandText <- "update todos set completed = not completed where id = $1 returning id, \"text\" as text, completed;"
+    cmd.Parameters.AddWithValue(id) |> ignore
+    use! reader = cmd.ExecuteReaderAsync()
+    let! has = reader.ReadAsync()
+    if not has then return None
+    else return Some (readTodo reader)
+}
+
+let clearCompleted (ds : NpgsqlDataSource) = task {
+    use! conn = ds.OpenConnectionAsync()
+    use cmd = conn.CreateCommand()
+    cmd.CommandText <- "delete from todos where completed = true;"
+    let! _ = cmd.ExecuteNonQueryAsync()
+    return ()
+}
+
+// =====================
+// HTTP Handlers (Giraffe)
+// =====================
+
+let handleGetTodos : HttpHandler = fun next ctx -> task {
+    let ds = ctx.GetService<NpgsqlDataSource>()
+    try
+        let! todos = getAllTodos ds
+        return! json todos next ctx
+    with ex ->
+        return! (setStatusCode 500 >=> text ("Internal Server Error: " + ex.Message)) next ctx
+}
+
+let handleCreateTodo : HttpHandler = fun next ctx -> task {
+    let ds = ctx.GetService<NpgsqlDataSource>()
+    try
+        let! payload = ctx.BindJsonAsync<NewTodo>()
+        if isNull (box payload) || String.IsNullOrWhiteSpace payload.text then
+            return! (RequestErrors.badRequest (text "text is required")) next ctx
         else
-            let created = { Id = r.GetInt32(0); Text = r.GetString(1); Completed = r.GetBoolean(2) }
-            Results.Created($"/api/todos/{created.Id}", created)
+            let! created = insertTodo ds payload.text
+            return! (setStatusCode 201
+                     >=> setHttpHeader "Location" (sprintf "/api/todos/%d" created.id)
+                     >=> json created) next ctx
+    with ex ->
+        return! (ServerErrors.internalError (text ("Internal Server Error: " + ex.Message))) next ctx
+}
 
-let toggleTodo (id:int) : IResult =
-    use cmd = dataSource.CreateCommand(
-        "update todos set completed = not completed where id = $1 returning id, text, completed;")
-    cmd.Parameters.AddWithValue(id) |> ignore
-    use r = cmd.ExecuteReader()
-    if not (r.Read()) then Results.NotFound($"Todo {id} not found")
-    else
-        let t = { Id = r.GetInt32(0); Text = r.GetString(1); Completed = r.GetBoolean(2) }
-        Results.Ok(t)
+let handlePatchTodo (id:int) : HttpHandler = fun next ctx -> task {
+    let ds = ctx.GetService<NpgsqlDataSource>()
+    try
+        let! patch = ctx.BindJsonAsync<UpdateTodo>()
+        let! updated = updateTodo ds id patch
+        match updated with
+        | Some t -> return! json t next ctx
+        | None   -> return! RequestErrors.notFound (text "Not found") next ctx
+    with ex ->
+        return! (ServerErrors.internalError (text ("Internal Server Error: " + ex.Message))) next ctx
+}
 
-let deleteTodo (id:int) : IResult =
-    use cmd = dataSource.CreateCommand("delete from todos where id = $1;")
-    cmd.Parameters.AddWithValue(id) |> ignore
-    let rows = cmd.ExecuteNonQuery()
-    if rows = 0 then Results.NotFound($"Todo {id} not found") else Results.NoContent()
+let handleDeleteTodo (id:int) : HttpHandler = fun next ctx -> task {
+    let ds = ctx.GetService<NpgsqlDataSource>()
+    let! ok = deleteTodo ds id
+    if ok then return! (setStatusCode 204 >=> text "") next ctx
+    else     return! RequestErrors.notFound (text "Not found") next ctx
+}
 
-let clearCompleted () : IResult =
-    use cmd = dataSource.CreateCommand("delete from todos where completed = true;")
-    cmd.ExecuteNonQuery() |> ignore
-    Results.NoContent()
+let handleToggleTodo (id:int) : HttpHandler = fun next ctx -> task {
+    let ds = ctx.GetService<NpgsqlDataSource>()
+    let! res = toggleTodo ds id
+    match res with
+    | Some t -> return! json t next ctx
+    | None   -> return! RequestErrors.notFound (text "Not found") next ctx
+}
 
-let app = builder.Build()
+let handleClearCompleted : HttpHandler = fun next ctx -> task {
+    let ds = ctx.GetService<NpgsqlDataSource>()
+    do! clearCompleted ds
+    return! (setStatusCode 204 >=> text "") next ctx
+}
 
-// Ensure schema before serving
-ensureTables ()
+// =====================
+// Routes
+// =====================
 
-// Health + routes
-app.MapGet ("/api/health",                 Func<IResult>(fun () -> Results.Text "OK"))      |> ignore
-app.MapGet ("/api/todos",                  Func<IResult>(getTodos))                         |> ignore
-app.MapPost("/api/todos",                  Func<NewTodo, IResult>(postTodo))               |> ignore
-app.MapPut ("/api/todos/{id:int}/toggle",  Func<int, IResult>(toggleTodo))                  |> ignore
-app.MapDelete("/api/todos/{id:int}",       Func<int, IResult>(deleteTodo))                   |> ignore
-app.MapDelete("/api/todos/completed",      Func<IResult>(clearCompleted))                   |> ignore
+let webApp : HttpHandler =
+    choose [
+        route  "/" >=> text "OK"
+        subRoute "/api/todos" (
+            choose [
+                GET    >=> route ""            >=> handleGetTodos
+                POST   >=> route ""            >=> handleCreateTodo
+                PUT    >=> routef "/%i/toggle"    handleToggleTodo
+                DELETE >=> routef "/%i"           handleDeleteTodo
+                DELETE >=> route  "/completed" >=> handleClearCompleted
+                PATCH  >=> routef "/%i"           handlePatchTodo
+            ]
+        )
+    ]
 
-app.Run()
+// =====================
+// App bootstrap
+// =====================
+
+[<EntryPoint>]
+let main argv =
+    let builder = WebApplication.CreateBuilder(argv)
+
+    // Connection string must be provided:
+    // - appsettings.json:  ConnectionStrings:DefaultConnection
+    // - or env var:        DOTNET_ConnectionStrings__DefaultConnection
+    builder.Services.AddSingleton<NpgsqlDataSource>(fun sp ->
+        let cfg = sp.GetRequiredService<IConfiguration>()
+        let connStr = cfg.GetConnectionString("DefaultConnection")
+        NpgsqlDataSourceBuilder(connStr).Build()
+    ) |> ignore
+
+    builder.Services.AddGiraffe() |> ignore
+
+    let app = builder.Build()
+
+    // one-time migration
+    app.Services.GetRequiredService<NpgsqlDataSource>()
+    |> ensureTables
+    |> Async.AwaitTask
+    |> Async.RunSynchronously
+
+    app.UseGiraffe webApp
+    app.Run()
+    0
