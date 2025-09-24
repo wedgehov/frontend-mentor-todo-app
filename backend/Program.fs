@@ -3,12 +3,11 @@ module Backend.Program
 open System
 open System.Data
 open System.Data.Common
-open System.Threading.Tasks
 open Microsoft.AspNetCore.Builder
-open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
+open Microsoft.Extensions.Logging
 open Giraffe
 open Npgsql
 
@@ -237,13 +236,28 @@ let webApp : HttpHandler =
 let main argv =
     let builder = WebApplication.CreateBuilder(argv)
 
+    // Use simple console logging in development for readability,
+    // and JSON logging in production for structured data.
+    builder.Logging.ClearProviders() |> ignore
+    if builder.Environment.IsDevelopment() then
+        builder.Logging.AddConsole() |> ignore
+    else
+        builder.Logging.AddJsonConsole() |> ignore
+
     // Connection string must be provided:
     // - appsettings.json:  ConnectionStrings:DefaultConnection
     // - or env var:        DOTNET_ConnectionStrings__DefaultConnection
     builder.Services.AddSingleton<NpgsqlDataSource>(fun sp ->
+        let env = sp.GetRequiredService<IHostEnvironment>()
         let cfg = sp.GetRequiredService<IConfiguration>()
         let connStr = cfg.GetConnectionString("DefaultConnection")
-        NpgsqlDataSourceBuilder(connStr).Build()
+        let loggerFactory = sp.GetRequiredService<ILoggerFactory>()
+        let dataSourceBuilder = NpgsqlDataSourceBuilder(connStr)
+        dataSourceBuilder.UseLoggerFactory(loggerFactory) |> ignore
+        // Log parameter values in development for easier debugging
+        if env.IsDevelopment() then
+            dataSourceBuilder.EnableParameterLogging() |> ignore
+        dataSourceBuilder.Build()
     ) |> ignore
 
     builder.Services.AddGiraffe() |> ignore
