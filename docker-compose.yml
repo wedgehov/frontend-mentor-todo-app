@@ -26,6 +26,7 @@ services:
     ports:
       - "5199:8080" # Map container's HTTP port 8080 to host's 5199
     environment:
+      - ASPNETCORE_ENVIRONMENT=Development
       - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=todo_app;Username=todo;Password=secret
       - ASPNETCORE_URLS=http://+:8080 # Tell ASP.NET Core to listen on the HTTP port
     depends_on:

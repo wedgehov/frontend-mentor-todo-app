@@ -164,6 +164,16 @@ The easiest way to run the entire application stack is with Docker Compose.
 
 The application will be running with the frontend communicating with the backend API inside the Docker network.
 
+#### Viewing Logs
+
+To view the logs from the backend service during development, run the following command in a separate terminal:
+
+```bash
+docker-compose logs -f backend
+```
+
+This will stream the backend logs to your console. Since the environment is set to `Development` in `docker-compose.yml`, the logs will be human-readable and include detailed information like SQL query parameters, which is very useful for debugging.
+
 ## Author
 
 - Website - Add your name here
