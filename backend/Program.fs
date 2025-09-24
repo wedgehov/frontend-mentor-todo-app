@@ -9,6 +9,8 @@ open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Logging
 open Giraffe
+open OpenTelemetry.Metrics
+open OpenTelemetry.Trace
 open Npgsql
 
 // =====================
@@ -85,15 +87,15 @@ let updateTodo (ds : NpgsqlDataSource) (id : int) (patch : UpdateTodo) = task {
 
     match patch.text with
     | Some t ->
-        setters.Add("\"text\" = $1")
-        values.Add(box t)
+        setters.Add("\"text\" = $1");
+        values.Add(t)
     | None -> ()
 
     match patch.completed with
     | Some c ->
         let pos = values.Count + 1
-        setters.Add(sprintf "completed = $%d" pos)
-        values.Add(box c)
+        setters.Add(sprintf "completed = $%d" pos);
+        values.Add(c)
     | None -> ()
 
     if setters.Count = 0 then
@@ -152,14 +154,15 @@ let clearCompleted (ds : NpgsqlDataSource) = task {
 // HTTP Handlers (Giraffe)
 // =====================
 
-let handleGetTodos : HttpHandler = fun next ctx -> task {
+let handleGetTodos : HttpHandler = fun next ctx ->
     let ds = ctx.GetService<NpgsqlDataSource>()
     try
-        let! todos = getAllTodos ds
-        return! json todos next ctx
+        task {
+            let! todos = getAllTodos ds
+            return! json todos next ctx
+        }
     with ex ->
-        return! (setStatusCode 500 >=> text ("Internal Server Error: " + ex.Message)) next ctx
-}
+        (setStatusCode 500 >=> text ("Internal Server Error: " + ex.Message)) next ctx
 
 let handleCreateTodo : HttpHandler = fun next ctx -> task {
     let ds = ctx.GetService<NpgsqlDataSource>()
@@ -244,13 +247,38 @@ let main argv =
     else
         builder.Logging.AddJsonConsole() |> ignore
 
+    // Configure OpenTelemetry for metrics and tracing
+    builder.Services.AddOpenTelemetry()
+        |> fun otel -> otel.WithMetrics(fun metrics ->
+            metrics
+                .AddAspNetCoreInstrumentation()
+                .AddHttpClientInstrumentation()
+                // Collect .NET runtime metrics (GC, JIT, etc.)
+                .AddRuntimeInstrumentation()
+                // Collect process metrics (CPU, memory)
+                .AddProcessInstrumentation()
+                // Expose a /metrics endpoint for Prometheus to scrape
+                .AddPrometheusExporter()
+            |> ignore
+        )
+        |> fun otel -> otel.WithTracing(fun tracing ->
+            tracing
+                .AddAspNetCoreInstrumentation()
+                .AddHttpClientInstrumentation()
+                .AddNpgsql()
+                // Export traces to an OTLP collector (like Grafana Agent, Jaeger, etc.)
+                // The endpoint is configured via OTEL_EXPORTER_OTLP_ENDPOINT env var.
+                .AddOtlpExporter()
+            |> ignore
+        ) |> ignore
+
     // Connection string must be provided:
     // - appsettings.json:  ConnectionStrings:DefaultConnection
     // - or env var:        DOTNET_ConnectionStrings__DefaultConnection
     builder.Services.AddSingleton<NpgsqlDataSource>(fun sp ->
-        let env = sp.GetRequiredService<IHostEnvironment>()
         let cfg = sp.GetRequiredService<IConfiguration>()
         let connStr = cfg.GetConnectionString("DefaultConnection")
+        let env = sp.GetRequiredService<IHostEnvironment>()
         let loggerFactory = sp.GetRequiredService<ILoggerFactory>()
         let dataSourceBuilder = NpgsqlDataSourceBuilder(connStr)
         dataSourceBuilder.UseLoggerFactory(loggerFactory) |> ignore
@@ -270,6 +298,9 @@ let main argv =
     |> Async.AwaitTask
     |> Async.RunSynchronously
 
-    app.UseGiraffe webApp
+    // Add the /metrics endpoint for Prometheus
+    app.UseOpenTelemetryPrometheusScrapingEndpoint()
+
+    app.UseGiraffe webApp |> ignore
     app.Run()
     0
