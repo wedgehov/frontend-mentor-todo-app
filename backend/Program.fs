@@ -251,19 +251,24 @@ let main argv =
     builder.Services.AddOpenTelemetry()
         |> fun otel -> otel.WithMetrics(fun metrics ->
             metrics
+                // For metrics, we add a 'View' to include the 'http.route' tag.
+                .AddView("http.server.request.duration", new MetricStreamConfiguration(TagKeys = [| "http.route" |]))
                 .AddAspNetCoreInstrumentation()
                 .AddHttpClientInstrumentation()
                 // Collect .NET runtime metrics (GC, JIT, etc.)
                 .AddRuntimeInstrumentation()
-                // Collect process metrics (CPU, memory)
-                .AddProcessInstrumentation()
                 // Expose a /metrics endpoint for Prometheus to scrape
                 .AddPrometheusExporter()
             |> ignore
         )
         |> fun otel -> otel.WithTracing(fun tracing ->
-            tracing
-                .AddAspNetCoreInstrumentation()
+            // For tracing, we use the EnrichWithHttpRequest option.
+            tracing.AddAspNetCoreInstrumentation(fun (opts: OpenTelemetry.Instrumentation.AspNetCore.AspNetCoreTraceInstrumentationOptions) ->
+                opts.EnrichWithHttpRequest <- fun (activity: System.Diagnostics.Activity) (req: Microsoft.AspNetCore.Http.HttpRequest) ->
+                    match req.RouteValues.TryGetValue "page" with
+                    | true, value -> activity.AddTag("http.route", value) |> ignore
+                    | _ -> ()
+                )
                 .AddHttpClientInstrumentation()
                 .AddNpgsql()
                 // Export traces to an OTLP collector (like Grafana Agent, Jaeger, etc.)
