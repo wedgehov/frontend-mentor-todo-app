@@ -66,6 +66,7 @@ This project is a full-stack application built entirely with F# and modern web t
 **Backend:**
 
 - F# with ASP.NET Core Minimal APIs
+- Entity Framework Core for data access
 - PostgreSQL for the database
 - Npgsql as the .NET data provider for PostgreSQL
 
@@ -82,25 +83,31 @@ This project was a great opportunity to build a complete, modern, full-stack app
 - **End-to-end F#:** Demonstrating the viability of F# for both frontend (via Fable) and backend development, enabling a consistent development experience.
 - **Elmish Architecture:** Implementing a robust and predictable state management pattern on the frontend.
 - **Minimal APIs in F#:** Creating a lightweight and performant backend API with ASP.NET Core.
+- **EF Core with F#:** Migrating from raw SQL to an ORM for improved type-safety and productivity.
 - **Containerization with Docker:** Setting up a multi-container application with `docker-compose`, including a database, backend, and a frontend served by Nginx. This ensures a consistent development and deployment environment.
 - **CI with GitHub Actions:** Automating the build and push process for Docker images, which is a foundational step for Continuous Deployment.
 
-Here's a snippet of the F# backend defining a minimal API endpoint:
+Here's a snippet of the F# backend showing the `DbContext` and a data helper using EF Core and LINQ:
 
 ```fsharp
 // backend/Program.fs
 
-let getTodos () : IResult =
-    use cmd = dataSource.CreateCommand("select id, text, completed from todos order by id;")
-    use r = cmd.ExecuteReader()
-    let acc = ResizeArray<Todo>()
-    while r.Read() do
-        acc.Add({ Id = r.GetInt32(0); Text = r.GetString(1); Completed = r.GetBoolean(2) })
-    Results.Ok(acc)
+type AppDbContext(options: DbContextOptions<AppDbContext>) =
+    inherit DbContext(options)
+    [<DefaultValue>] val mutable private todos : DbSet<Todo>
+    member this.Todos with get() = this.todos and set(v) = this.todos <- v
+
+let getAllTodos (db : AppDbContext) =
+    db.Todos.OrderBy(fun t -> t.id).ToListAsync()
 
 // ...
 
-app.MapGet ("/api/todos", Func<IResult>(getTodos)) |> ignore
+let handleGetTodos : HttpHandler = fun next ctx ->
+    let db = ctx.GetService<AppDbContext>()
+    task {
+        let! todos = getAllTodos db
+        return! json todos next ctx
+    }
 ```
 
 And the corresponding Elmish update logic on the frontend:
@@ -125,7 +132,6 @@ Future improvements could include:
 - Implementing the "drag and drop" functionality to reorder todos.
 - Adding user authentication to support multiple users.
 - Writing more comprehensive tests for both frontend and backend.
-- Setting up a Continuous Deployment (CD) pipeline to automatically deploy the application.
 
 ### Useful resources
 
