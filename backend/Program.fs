@@ -14,17 +14,30 @@ open Giraffe
 open OpenTelemetry.Metrics
 open OpenTelemetry.Trace
 open Npgsql
+open System.Threading.Tasks
+open Microsoft.AspNetCore.Authentication
+open Microsoft.AspNetCore.Authentication.Cookies
+open System.Security.Claims
+open BCrypt.Net
 
 // =====================
 // DTOs (wire format)
 // =====================
 
 [<CLIMutable>]
+[<Table("users")>]
+type User =
+    { [<Column("id")>] id : int
+      [<Column("email")>] email : string
+      [<Column("password_hash")>] passwordHash : string }
+
+[<CLIMutable>]
 [<Table("todos")>]
 type Todo =
     { [<Column("id")>] id : int
       mutable text      : string
-      mutable completed : bool }
+      mutable completed : bool
+      [<Column("user_id")>] userId : int }
 
 [<CLIMutable>]
 type NewTodo = { text : string }
@@ -34,6 +47,16 @@ type UpdateTodo =
     { text      : string option
       completed : bool   option }
 
+[<CLIMutable>]
+type RegisterUserRequest =
+    { email    : string
+      password : string }
+
+[<CLIMutable>]
+type LoginUserRequest =
+    { email    : string
+      password : string }
+
 // =====================
 // EF Core DbContext
 // =====================
@@ -42,54 +65,62 @@ type AppDbContext(options: DbContextOptions<AppDbContext>) =
     inherit DbContext(options)
     [<DefaultValue>] val mutable private todos : DbSet<Todo>
     member this.Todos with get() = this.todos and set(v) = this.todos <- v
+    [<DefaultValue>] val mutable private users : DbSet<User>
+    member this.Users with get() = this.users and set(v) = this.users <- v
 
 // =====================
 // DB helpers
 // =====================
 
-let getAllTodos (db : AppDbContext) =
-    db.Todos.OrderBy(fun t -> t.id).ToListAsync()
+let findUserByEmail (db : AppDbContext) (email : string) =
+    db.Users.FirstOrDefaultAsync(fun u -> u.email = email)
 
-let insertTodo (db : AppDbContext) (textValue : string) = task {
-    let newTodo = { id = 0; text = textValue; completed = false }
+let getAllTodos (db : AppDbContext) (userId : int) =
+    db.Todos.Where(fun t -> t.userId = userId).OrderBy(fun t -> t.id).ToListAsync()
+
+let insertTodo (db : AppDbContext) (userId : int) (textValue : string) = task {
+    let newTodo = { id = 0; text = textValue; completed = false; userId = userId }
     db.Todos.Add(newTodo) |> ignore
     let! _ = db.SaveChangesAsync()
     return newTodo
 }
 
-let updateTodo (db : AppDbContext) (id : int) (patch : UpdateTodo) = task {
+let updateTodo (db : AppDbContext) (userId : int) (id : int) (patch : UpdateTodo) = task {
     let! todo = db.Todos.FindAsync(id).AsTask() |> Async.AwaitTask
     match Option.ofObj todo with
     | None -> return None
     | Some todo ->
+        if todo.userId <> userId then return None else
         patch.text      |> Option.iter (fun t -> todo.text <- t)
         patch.completed |> Option.iter (fun c -> todo.completed <- c)
         let! _ = db.SaveChangesAsync()
         return Some todo
 }
 
-let deleteTodo (db : AppDbContext) (id : int) = task {
+let deleteTodo (db : AppDbContext) (userId : int) (id : int) = task {
     let! todo = db.Todos.FindAsync(id).AsTask() |> Async.AwaitTask
     match Option.ofObj todo with
     | None -> return false
     | Some todo ->
+        if todo.userId <> userId then return false else
         db.Todos.Remove(todo) |> ignore
         let! count = db.SaveChangesAsync()
         return count > 0
 }
 
-let toggleTodo (db : AppDbContext) (id : int) = task {
+let toggleTodo (db : AppDbContext) (userId : int) (id : int) = task {
     let! todo = db.Todos.FindAsync(id).AsTask() |> Async.AwaitTask
     match Option.ofObj todo with
     | None -> return None
     | Some todo ->
+        if todo.userId <> userId then return None else
         todo.completed <- not todo.completed
         let! _ = db.SaveChangesAsync()
         return Some todo
 }
 
-let clearCompleted (db : AppDbContext) = task {
-    let completed = db.Todos.Where(fun t -> t.completed)
+let clearCompleted (db : AppDbContext) (userId : int) = task {
+    let completed = db.Todos.Where(fun t -> t.userId = userId && t.completed)
     db.Todos.RemoveRange(completed)
     let! _ = db.SaveChangesAsync()
     return ()
@@ -99,61 +130,117 @@ let clearCompleted (db : AppDbContext) = task {
 // HTTP Handlers (Giraffe)
 // =====================
 
+let requiresAuthentication : HttpHandler =
+    fun next ctx ->
+        if ctx.User.Identity <> null && ctx.User.Identity.IsAuthenticated then
+            next ctx
+        else
+            (setStatusCode 401 >=> text "User not authenticated.") next ctx
+
+let getUserId (ctx: HttpContext) : int =
+    match ctx.User.FindFirst "UserId" with
+    | null -> failwith "UserId claim not found in token. This is unexpected for an authenticated user."
+    | claim -> Int32.Parse claim.Value
+
 let handleGetTodos : HttpHandler = fun next ctx ->
     let db = ctx.GetService<AppDbContext>()
-    try
-        task {
-            let! todos = getAllTodos db
-            return! json todos next ctx
-        }
-    with ex ->
-        (setStatusCode 500 >=> text ("Internal Server Error: " + ex.Message)) next ctx
+    let userId = getUserId ctx
+    task {
+        let! todos = getAllTodos db userId
+        return! json todos next ctx
+    }
 
 let handleCreateTodo : HttpHandler = fun next ctx -> task {
     let db = ctx.GetService<AppDbContext>()
-    try
-        let! payload = ctx.BindJsonAsync<NewTodo>()
-        if isNull (box payload) || String.IsNullOrWhiteSpace payload.text then
-            return! (RequestErrors.badRequest (text "text is required")) next ctx
-        else
-            let! created = insertTodo db payload.text
-            return! (setStatusCode 201
-                     >=> setHttpHeader "Location" (sprintf "/api/todos/%d" created.id)
-                     >=> json created) next ctx
-    with ex ->
-        return! (ServerErrors.internalError (text ("Internal Server Error: " + ex.Message))) next ctx
+    let userId = getUserId ctx
+    let! payload = ctx.BindJsonAsync<NewTodo>()
+    if payload = null || String.IsNullOrWhiteSpace payload.text then
+        return! (setStatusCode 400 >=> text "text is required") next ctx
+    else
+        let! created = insertTodo db userId payload.text
+        return! (setStatusCode 201
+                 >=> setHttpHeader "Location" (sprintf "/api/todos/%d" created.id)
+                 >=> json created) next ctx
 }
 
 let handlePatchTodo (id:int) : HttpHandler = fun next ctx -> task {
     let db = ctx.GetService<AppDbContext>()
-    try
-        let! patch = ctx.BindJsonAsync<UpdateTodo>()
-        let! updated = updateTodo db id patch
-        match updated with
-        | Some t -> return! json t next ctx
-        | None   -> return! RequestErrors.notFound (text "Not found") next ctx
-    with ex ->
-        return! (ServerErrors.internalError (text ("Internal Server Error: " + ex.Message))) next ctx
+    let userId = getUserId ctx
+    let! patch = ctx.BindJsonAsync<UpdateTodo>()
+    let! updated = updateTodo db userId id patch
+    match updated with
+    | Some t -> return! json t next ctx
+    | None   -> return! (setStatusCode 404 >=> text "Not found") next ctx
 }
 
 let handleDeleteTodo (id:int) : HttpHandler = fun next ctx -> task {
     let db = ctx.GetService<AppDbContext>()
-    let! ok = deleteTodo db id
+    let userId = getUserId ctx
+    let! ok = deleteTodo db userId id
     if ok then return! (setStatusCode 204 >=> text "") next ctx
-    else     return! RequestErrors.notFound (text "Not found") next ctx
+    else     return! (setStatusCode 404 >=> text "Not found") next ctx
 }
 
 let handleToggleTodo (id:int) : HttpHandler = fun next ctx -> task {
     let db = ctx.GetService<AppDbContext>()
-    let! res = toggleTodo db id
+    let userId = getUserId ctx
+    let! res = toggleTodo db userId id
     match res with
     | Some t -> return! json t next ctx
-    | None   -> return! RequestErrors.notFound (text "Not found") next ctx
+    | None   -> return! (setStatusCode 404 >=> text "Not found") next ctx
 }
 
 let handleClearCompleted : HttpHandler = fun next ctx -> task {
     let db = ctx.GetService<AppDbContext>()
-    do! clearCompleted db
+    let userId = getUserId ctx
+    do! clearCompleted db userId
+    return! (setStatusCode 204 >=> text "") next ctx
+}
+
+let handleRegister : HttpHandler = fun next ctx -> task {
+    let db = ctx.GetService<AppDbContext>()
+    let! req = ctx.BindJsonAsync<RegisterUserRequest>()
+
+    if req = null || String.IsNullOrWhiteSpace(req.email) || String.IsNullOrWhiteSpace(req.password) then
+        return! (setStatusCode 400 >=> text "Email and password are required.") next ctx
+    else
+        let! existingUser = findUserByEmail db req.email
+        if existingUser <> null then
+            return! (setStatusCode 409 >=> text "A user with that email already exists.") next ctx
+        else
+            let passwordHash = BCrypt.HashPassword(req.password)
+            let newUser = { id = 0; email = req.email; passwordHash = passwordHash }
+            db.Users.Add(newUser) |> ignore
+            let! _ = db.SaveChangesAsync()
+            return! (setStatusCode 201 >=> json newUser) next ctx
+}
+
+let handleLogin : HttpHandler = fun next ctx -> task {
+    let db = ctx.GetService<AppDbContext>()
+    let! req = ctx.BindJsonAsync<LoginUserRequest>()
+
+    if req = null || String.IsNullOrWhiteSpace(req.email) || String.IsNullOrWhiteSpace(req.password) then
+        return! (setStatusCode 401 >=> text "Invalid credentials.") next ctx
+    else
+        let! user = findUserByEmail db req.email
+        match Option.ofObj user with
+        | None ->
+            return! (setStatusCode 401 >=> text "Invalid credentials.") next ctx
+        | Some user ->
+            if BCrypt.Verify(req.password, user.passwordHash) then
+                let claims =
+                    [ Claim(ClaimTypes.Name, user.email)
+                      Claim("UserId", user.id.ToString()) ]
+                let identity = ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme)
+                let principal = ClaimsPrincipal(identity)
+                do! ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal)
+                return! json user next ctx
+            else
+                return! (setStatusCode 401 >=> text "Invalid credentials.") next ctx
+}
+
+let handleLogout : HttpHandler = fun next ctx -> task {
+    do! ctx.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme)
     return! (setStatusCode 204 >=> text "") next ctx
 }
 
@@ -164,8 +251,15 @@ let handleClearCompleted : HttpHandler = fun next ctx -> task {
 let webApp : HttpHandler =
     choose [
         route  "/" >=> text "OK"
-        subRoute "/api/todos" (
+        subRoute "/api/auth" (
             choose [
+                POST >=> route "/register" >=> handleRegister
+                POST >=> route "/login"    >=> handleLogin
+                POST >=> route "/logout"   >=> handleLogout
+            ]
+        )
+        subRoute "/api/todos" (
+            requiresAuthentication >=> choose [
                 GET    >=> route ""            >=> handleGetTodos
                 POST   >=> route ""            >=> handleCreateTodo
                 PUT    >=> routef "/%i/toggle"    handleToggleTodo
@@ -248,6 +342,19 @@ let main argv =
         ) |> ignore
     ) |> ignore
 
+    // Add cookie authentication
+    builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+        .AddCookie(fun options ->
+            options.Cookie.Name <- "todoapp.auth"
+            options.Cookie.HttpOnly <- true
+            options.Cookie.SecurePolicy <- CookieSecurePolicy.Always
+
+            // On 401, don't redirect, just return the status code
+            options.Events.OnRedirectToLogin <- (fun context ->
+                context.Response.StatusCode <- 401
+                Task.CompletedTask)
+        ) |> ignore
+
     builder.Services.AddGiraffe() |> ignore
 
     let app = builder.Build()
@@ -262,6 +369,8 @@ let main argv =
 
     // Add the /metrics endpoint for Prometheus
     app.UseOpenTelemetryPrometheusScrapingEndpoint() |> ignore
+
+    app.UseAuthentication() |> ignore
 
     app.UseGiraffe webApp |> ignore
     app.Run()
