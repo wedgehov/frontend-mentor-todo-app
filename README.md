@@ -37,6 +37,10 @@ Users should be able to:
 
 - **Bonus**: Drag and drop to reorder items on the list (Note: This is not yet implemented)
 
+- **User Authentication**: Users can register for a new account and log in.
+- **Protected Routes**: The main todo list is only accessible to authenticated users.
+- **Multi-page Navigation**: The application uses routing to navigate between login, registration, and the main todo page.
+
 ### Screenshot
 
 ![](./design/desktop-preview.jpg)
@@ -62,13 +66,16 @@ This project is a full-stack application built entirely with F# and modern web t
 - Vite for a fast development server and build tool
 - Tailwind CSS for styling
 - React as the underlying UI library
+- `Fable.Elmish.UrlParser` for client-side routing
 
 **Backend:**
 
-- F# with ASP.NET Core Minimal APIs
+- F# with ASP.NET Core
+- Giraffe as a lightweight, functional web framework on top of ASP.NET Core
 - Entity Framework Core for data access
 - PostgreSQL for the database
-- Npgsql as the .NET data provider for PostgreSQL
+- `Microsoft.AspNetCore.Authentication.Cookies` for cookie-based authentication
+- `BCrypt.Net-Next` for secure password hashing
 
 **DevOps & Tooling:**
 
@@ -82,47 +89,71 @@ This project was a great opportunity to build a complete, modern, full-stack app
 
 - **End-to-end F#:** Demonstrating the viability of F# for both frontend (via Fable) and backend development, enabling a consistent development experience.
 - **Elmish Architecture:** Implementing a robust and predictable state management pattern on the frontend.
-- **Minimal APIs in F#:** Creating a lightweight and performant backend API with ASP.NET Core.
-- **EF Core with F#:** Migrating from raw SQL to an ORM for improved type-safety and productivity.
+- **Secure Authentication Flow:** Building a complete user registration and login system with secure password hashing (BCrypt) and cookie-based sessions.
+- **Client-Side Routing:** Using `Elmish.UrlParser` to create a seamless multi-page experience within a single-page application, complete with protected routes that require authentication.
 - **Containerization with Docker:** Setting up a multi-container application with `docker-compose`, including a database, backend, and a frontend served by Nginx. This ensures a consistent development and deployment environment.
 - **CI with GitHub Actions:** Automating the build and push process for Docker images, which is a foundational step for Continuous Deployment.
 
-Here's a snippet of the F# backend showing the `DbContext` and a data helper using EF Core and LINQ:
+Here's a snippet from the backend showing the Giraffe route handler for user registration:
 
 ```fsharp
 // backend/Program.fs
 
-type AppDbContext(options: DbContextOptions<AppDbContext>) =
-    inherit DbContext(options)
-    [<DefaultValue>] val mutable private todos : DbSet<Todo>
-    member this.Todos with get() = this.todos and set(v) = this.todos <- v
-
-let getAllTodos (db : AppDbContext) =
-    db.Todos.OrderBy(fun t -> t.id).ToListAsync()
-
-// ...
-
-let handleGetTodos : HttpHandler = fun next ctx ->
+let handleRegister : HttpHandler = fun next ctx -> task {
     let db = ctx.GetService<AppDbContext>()
-    task {
-        let! todos = getAllTodos db
-        return! json todos next ctx
-    }
+    let! req = ctx.BindJsonAsync<RegisterUserRequest>()
+
+    if req = null || String.IsNullOrWhiteSpace(req.email) || String.IsNullOrWhiteSpace(req.password) then
+        return! (setStatusCode 400 >=> text "Email and password are required.") next ctx
+    else
+        let! existingUser = findUserByEmail db req.email
+        if existingUser <> null then
+            return! (setStatusCode 409 >=> text "A user with that email already exists.") next ctx
+        else
+            let passwordHash = BCrypt.HashPassword(req.password)
+            let newUser = { id = 0; email = req.email; passwordHash = passwordHash }
+            db.Users.Add(newUser) |> ignore
+            let! _ = db.SaveChangesAsync()
+            
+            // Sign in the user after successful registration
+            let claims =
+                [ Claim(ClaimTypes.Name, newUser.email)
+                  Claim("UserId", newUser.id.ToString()) ]
+            let identity = ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme)
+            let principal = ClaimsPrincipal(identity)
+            do! ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal)
+            
+            return! (setStatusCode 201 >=> json newUser) next ctx
+}
 ```
 
-And the corresponding Elmish update logic on the frontend:
+And the corresponding routing and page navigation logic on the frontend using Elmish:
 
 ```fsharp
 // frontend/src/Program.fs
 
-let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
-  match msg with
-  // ...
-  | GotTodos (Ok todos) ->
-      { model with Todos = Loaded todos }, Cmd.none
-  | GotTodos (Error e) ->
-      { model with Todos = Errored e.Message }, Cmd.none
-  // ...
+let urlUpdate (result: Page option) (model: Model) : Model * Cmd<Msg> =
+    match result with
+    | Some requestedPage ->
+        let needsAuth = match requestedPage with | TodosPage -> true | _ -> false
+        let isAuthenticated = model.User.IsSome
+
+        // If user needs auth for the requested page but isn't authenticated,
+        // force the page to be LoginPage. Otherwise, use the requested page.
+        let actualPage =
+            if needsAuth && not isAuthenticated then LoginPage
+            else requestedPage
+
+        { model with Page = actualPage }, Cmd.none
+    | None -> model, Cmd.none // No page found, do nothing
+
+// ...
+
+let start () =
+    Program.mkProgram init update view
+    |> Program.toNavigable urlParser urlUpdate // Wires up the routing
+    |> Program.withReactBatched "root"
+    |> Program.run
 ```
 
 ### Continued development
@@ -130,7 +161,6 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
 Future improvements could include:
 
 - Implementing the "drag and drop" functionality to reorder todos.
-- Adding user authentication to support multiple users.
 - Writing more comprehensive tests for both frontend and backend.
 
 ### Useful resources
@@ -166,7 +196,7 @@ The easiest way to run the entire application stack is with Docker Compose.
 
 3.  Open your browser and navigate to:
     -   Frontend: http://localhost:5173
-    -   Backend API health check: http://localhost:5199/api/health
+    -   Backend API health check: http://localhost:5199
 
 The application will be running with the frontend communicating with the backend API inside the Docker network.
 
@@ -179,6 +209,8 @@ docker-compose logs -f backend
 ```
 
 This will stream the backend logs to your console. Since the environment is set to `Development` in `docker-compose.yml`, the logs will be human-readable and include detailed information like SQL query parameters, which is very useful for debugging.
+
+You can also view the frontend (Nginx) logs with `docker-compose logs -f frontend`.
 
 ## Author
 
