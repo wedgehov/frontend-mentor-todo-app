@@ -15,7 +15,7 @@ open Browser.Dom
 type Filter =
   | All
   | Active
-| Completed
+  | Completed
 
 type Todo = 
   { Id: int
@@ -47,6 +47,8 @@ type Msg =
   | SetFilter of Filter
   | ClearCompleted
   | ToggleTheme
+  | RequestLogout
+  | LoadTodos
   // API results
   | GotTodos of Result<Todo list, exn>
   | TodoAdded of Result<Todo, exn>
@@ -113,7 +115,9 @@ module Api =
         |> Http.send
       let status = res.statusCode
       let body = bodyOrEmpty res.responseText
-      if not (is2xx status) then
+      if status = 401 then
+        return Error (exn "Unauthorized")
+      elif not (is2xx status) then
         return Error (exn (sprintf "HTTP %d: %s" status body))
       else
         return parseTodosJson body
@@ -131,7 +135,9 @@ module Api =
         |> Http.send
       let status = res.statusCode
       let body = bodyOrEmpty res.responseText
-      if not (is2xx status) then
+      if status = 401 then
+        return Error (exn "Unauthorized")
+      elif not (is2xx status) then
         return Error (exn (sprintf "HTTP %d: %s" status body))
       else
         return parseTodoJson body
@@ -148,7 +154,9 @@ module Api =
         |> Http.send
       let status = res.statusCode
       let body = bodyOrEmpty res.responseText
-      if not (is2xx status) then
+      if status = 401 then
+        return Error (exn "Unauthorized")
+      elif not (is2xx status) then
         return Error (exn (sprintf "HTTP %d: %s" status body))
       else
         return parseTodoJson body
@@ -163,7 +171,9 @@ module Api =
         |> Http.send
       let status = res.statusCode
       let body = bodyOrEmpty res.responseText
-      if status = 404 then
+      if status = 401 then
+        return Error (exn "Unauthorized")
+      elif status = 404 then
         return Ok id
       elif not (is2xx status) then
         return Error (exn (sprintf "HTTP %d: %s" status body))
@@ -180,7 +190,9 @@ module Api =
         |> Http.send
       let status = res.statusCode
       let body = bodyOrEmpty res.responseText
-      if not (is2xx status) then
+      if status = 401 then
+        return Error (exn "Unauthorized")
+      elif not (is2xx status) then
         return Error (exn (sprintf "HTTP %d: %s" status body))
       else
         return Ok ()
@@ -200,7 +212,9 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
   | DeleteTodo id -> model, Api.deleteTodo id
   | SetFilter f -> { model with Filter = f }, Cmd.none
   | ClearCompleted -> model, Api.clearCompleted ()
+  | RequestLogout -> model, Cmd.none // Parent will handle this
   | ToggleTheme -> { model with Theme = (match model.Theme with Light -> Dark | Dark -> Light) }, Cmd.none
+  | LoadTodos -> model, Api.getTodos ()
 
   | GotTodos (Ok todos) ->
       { model with Todos = Loaded todos }, Cmd.none
@@ -241,7 +255,7 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
 
 // =============== View ===============
 
-let view (model: Model) (dispatch: Msg -> unit) =
+let view (user: User option) (model: Model) (dispatch: Msg -> unit) =
   let isDark = model.Theme = Dark
 
   let filterButton (label: string, filter: Filter) =
@@ -360,10 +374,20 @@ let view (model: Model) (dispatch: Msg -> unit) =
             prop.className "flex justify-between items-center mb-8"
             prop.children [ 
               Html.h1 [ prop.className "text-3xl md:text-4xl font-bold text-white tracking-[0.3em]"; prop.text "TODO" ]
-              Html.button [ 
-                prop.onClick (fun _ -> dispatch ToggleTheme)
-                prop.children [ 
-                  Html.img [ prop.src (if isDark then "/images/icon-sun.svg" else "/images/icon-moon.svg"); prop.alt "Toggle theme" ]
+              Html.div [ 
+                prop.className "flex items-center gap-4"
+                prop.children [
+                  Html.button [ 
+                    prop.className "text-white hover:text-gray-300 text-sm font-medium"
+                    prop.onClick (fun _ -> dispatch RequestLogout)
+                    prop.text "Logout"
+                  ]
+                  Html.button [ 
+                    prop.onClick (fun _ -> dispatch ToggleTheme)
+                    prop.children [ 
+                      Html.img [ prop.src (if isDark then "/images/icon-sun.svg" else "/images/icon-moon.svg"); prop.alt "Toggle theme" ]
+                    ]
+                  ]
                 ]
               ]
             ]
@@ -410,6 +434,13 @@ let view (model: Model) (dispatch: Msg -> unit) =
               filterButton ("Completed", Completed)
             ]
           ]
+          (match user with
+           | Some u ->
+                Html.p [
+                    prop.className (if isDark then "text-center text-sm mt-4 text-purple-700" else "text-center text-sm mt-4 text-gray-600")
+                    prop.text $"Logged in as {u.Email}"
+                ]
+           | None -> Html.none)
           Html.p [ 
             prop.className (if isDark then "text-center text-sm mt-10 text-purple-700" else "text-center text-sm mt-10 text-gray-600")
             prop.text "Drag and drop to reorder list"

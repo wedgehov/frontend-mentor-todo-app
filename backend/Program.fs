@@ -63,10 +63,23 @@ type LoginUserRequest =
 
 type AppDbContext(options: DbContextOptions<AppDbContext>) =
     inherit DbContext(options)
-    [<DefaultValue>] val mutable private todos : DbSet<Todo>
+    [<DefaultValue(false)>] val mutable private todos : DbSet<Todo>
     member this.Todos with get() = this.todos and set(v) = this.todos <- v
-    [<DefaultValue>] val mutable private users : DbSet<User>
+    [<DefaultValue(false)>] val mutable private users : DbSet<User>
     member this.Users with get() = this.users and set(v) = this.users <- v
+    
+    override this.OnModelCreating(modelBuilder: ModelBuilder) =
+        // Configure User entity
+        modelBuilder.Entity<User>().ToTable("users") |> ignore
+        modelBuilder.Entity<User>().HasKey("id") |> ignore
+        modelBuilder.Entity<User>().Property(fun u -> u.id).ValueGeneratedOnAdd() |> ignore
+        
+        // Configure Todo entity  
+        modelBuilder.Entity<Todo>().ToTable("todos") |> ignore
+        modelBuilder.Entity<Todo>().HasKey("id") |> ignore
+        modelBuilder.Entity<Todo>().Property(fun t -> t.id).ValueGeneratedOnAdd() |> ignore
+        
+        base.OnModelCreating(modelBuilder)
 
 // =====================
 // DB helpers
@@ -212,6 +225,15 @@ let handleRegister : HttpHandler = fun next ctx -> task {
             let newUser = { id = 0; email = req.email; passwordHash = passwordHash }
             db.Users.Add(newUser) |> ignore
             let! _ = db.SaveChangesAsync()
+            
+            // Sign in the user after successful registration
+            let claims =
+                [ Claim(ClaimTypes.Name, newUser.email)
+                  Claim("UserId", newUser.id.ToString()) ]
+            let identity = ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme)
+            let principal = ClaimsPrincipal(identity)
+            do! ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal)
+            
             return! (setStatusCode 201 >=> json newUser) next ctx
 }
 
@@ -241,7 +263,7 @@ let handleLogin : HttpHandler = fun next ctx -> task {
 
 let handleLogout : HttpHandler = fun next ctx -> task {
     do! ctx.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme)
-    return! (setStatusCode 204 >=> text "") next ctx
+    return! (setStatusCode 204) next ctx
 }
 
 // =====================
@@ -347,13 +369,24 @@ let main argv =
         .AddCookie(fun options ->
             options.Cookie.Name <- "todoapp.auth"
             options.Cookie.HttpOnly <- true
-            options.Cookie.SecurePolicy <- CookieSecurePolicy.Always
+            options.Cookie.SecurePolicy <- CookieSecurePolicy.SameAsRequest
+            options.Cookie.SameSite <- SameSiteMode.Lax
 
             // On 401, don't redirect, just return the status code
             options.Events.OnRedirectToLogin <- (fun context ->
                 context.Response.StatusCode <- 401
                 Task.CompletedTask)
         ) |> ignore
+
+    // Add CORS to allow frontend requests
+    builder.Services.AddCors(fun options ->
+        options.AddDefaultPolicy(fun policy ->
+            policy.WithOrigins("http://localhost:5173")
+                  .AllowAnyMethod()
+                  .AllowAnyHeader()
+                  .AllowCredentials() |> ignore
+        ) |> ignore
+    ) |> ignore
 
     builder.Services.AddGiraffe() |> ignore
 
@@ -363,12 +396,38 @@ let main argv =
     // For this simple startup task, getting it directly is fine.
     use scope = app.Services.CreateScope()
     let dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>()
-    // This ensures the database is created, but doesn't handle schema updates.
-    // For production, `dbContext.Database.MigrateAsync()` is preferred.
-    dbContext.Database.EnsureCreated() |> ignore
+    let logger = scope.ServiceProvider.GetRequiredService<ILogger<AppDbContext>>()
+    
+    try
+        // This ensures the database is created, but doesn't handle schema updates.
+        // For production, `dbContext.Database.MigrateAsync()` is preferred.
+        let created = dbContext.Database.EnsureCreated()
+        if created then
+            logger.LogInformation("Database and tables created successfully")
+            printfn "Database and tables created successfully"
+        else
+            logger.LogInformation("Database already exists")
+            printfn "Database already exists"
+            
+        // Test the connection by checking if we can connect to the database
+        let canConnect = dbContext.Database.CanConnect()
+        if canConnect then
+            logger.LogInformation("Database connection test successful")
+            printfn "Database connection test successful"
+        else
+            logger.LogWarning("Database connection test failed")
+            printfn "Database connection test failed"
+    with
+    | ex -> 
+        logger.LogError(ex, "Failed to initialize database")
+        printfn "Failed to initialize database: %s" ex.Message
+        reraise()
 
     // Add the /metrics endpoint for Prometheus
     app.UseOpenTelemetryPrometheusScrapingEndpoint() |> ignore
+
+    // Enable CORS
+    app.UseCors() |> ignore
 
     app.UseAuthentication() |> ignore
 

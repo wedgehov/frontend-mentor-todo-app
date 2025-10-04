@@ -42,64 +42,93 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
 // View
 let view (model: Model) (dispatch: Msg -> unit) =
     Html.div [ 
-        prop.className "w-full max-w-xs mx-auto"
+        prop.className "min-h-screen transition-colors duration-300 bg-gray-50"
+        prop.style [ style.fontFamily "var(--font-josefin-sans)"; style.fontSize 18 ]
         prop.children [
-            Html.form [ 
-                prop.className "bg-white shadow-md rounded px-8 pt-6 pb-8 mb-4"
-                prop.onSubmit (fun ev -> ev.preventDefault(); dispatch AttemptLogin)
+            // Background image
+            Html.div [ 
+                prop.className "h-[200px] md:h-[300px] bg-no-repeat bg-cover bg-[url('/images/bg-mobile-light.jpg')] md:bg-[url('/images/bg-desktop-light.jpg')]"
+            ]
+            // Main content
+            Html.main [ 
+                prop.className "relative px-6 md:px-0 md:max-w-xl mx-auto -mt-36 md:-mt-48"
                 prop.children [
+                    // Header
                     Html.div [ 
-                        prop.className "mb-4"
+                        prop.className "flex justify-center items-center mb-8"
                         prop.children [
-                            Html.label [ 
-                                prop.className "block text-gray-700 text-sm font-bold mb-2"
-                                prop.htmlFor "email"
-                                prop.text "Email Address"
-                            ]
-                            Html.input [ 
-                                prop.className "shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
-                                prop.id "email"
-                                prop.type' "email"
-                                prop.placeholder "Email"
-                                prop.value model.Email
-                                prop.onChange (SetEmail >> dispatch)
-                            ]
+                            Html.h1 [ prop.className "text-3xl md:text-4xl font-bold text-white tracking-[0.3em]"; prop.text "TODO" ]
                         ]
                     ]
+                    // Login form
                     Html.div [ 
-                        prop.className "mb-6"
+                        prop.className "rounded-md shadow-xl transition-colors duration-300 bg-white"
                         prop.children [
-                            Html.label [ 
-                                prop.className "block text-gray-700 text-sm font-bold mb-2"
-                                prop.htmlFor "password"
-                                prop.text "Password"
-                            ]
-                            Html.input [ 
-                                prop.className "shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 mb-3 leading-tight focus:outline-none focus:shadow-outline"
-                                prop.id "password"
-                                prop.type' "password"
-                                prop.placeholder "******************"
-                                prop.value model.Password
-                                prop.onChange (SetPassword >> dispatch)
-                            ]
-                            match model.Error with
-                            | Some error -> Html.p [ prop.className "text-red-500 text-xs italic"; prop.text error ]
-                            | None -> Html.none
-                        ]
-                    ]
-                    Html.div [ 
-                        prop.className "flex items-center justify-between"
-                        prop.children [
-                            Html.button [ 
-                                prop.className "bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline"
-                                prop.type' "submit"
-                                prop.disabled model.IsLoading
-                                prop.text (if model.IsLoading then "Logging in..." else "Login")
-                            ]
-                            Html.a [ 
-                                prop.className "inline-block align-baseline font-bold text-sm text-blue-500 hover:text-blue-800"
-                                prop.href "#/register"
-                                prop.text "Create Account"
+                            Html.form [ 
+                                prop.className "p-8"
+                                prop.onSubmit (fun ev -> ev.preventDefault(); dispatch AttemptLogin)
+                                prop.children [
+                                    Html.div [ 
+                                        prop.className "mb-6"
+                                        prop.children [
+                                            Html.label [ 
+                                                prop.className "block text-navy-850 text-sm font-bold mb-2"
+                                                prop.htmlFor "email"
+                                                prop.text "Email Address"
+                                            ]
+                                            Html.input [ 
+                                                prop.className "w-full py-3 px-4 border border-gray-300 rounded-md text-navy-850 placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                                prop.id "email"
+                                                prop.type' "email"
+                                                prop.placeholder "Enter your email"
+                                                prop.value model.Email
+                                                prop.onChange (SetEmail >> dispatch)
+                                            ]
+                                        ]
+                                    ]
+                                    Html.div [ 
+                                        prop.className "mb-6"
+                                        prop.children [
+                                            Html.label [ 
+                                                prop.className "block text-navy-850 text-sm font-bold mb-2"
+                                                prop.htmlFor "password"
+                                                prop.text "Password"
+                                            ]
+                                            Html.input [ 
+                                                prop.className "w-full py-3 px-4 border border-gray-300 rounded-md text-navy-850 placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                                prop.id "password"
+                                                prop.type' "password"
+                                                prop.placeholder "Enter your password"
+                                                prop.value model.Password
+                                                prop.onChange (SetPassword >> dispatch)
+                                            ]
+                                            match model.Error with
+                                            | Some error -> Html.p [ prop.className "text-red-500 text-xs italic mt-2"; prop.text error ]
+                                            | None -> Html.none
+                                        ]
+                                    ]
+                                    Html.div [ 
+                                        prop.className "flex flex-col gap-4"
+                                        prop.children [
+                                            Html.button [ 
+                                                prop.className "w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-4 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                prop.type' "submit"
+                                                prop.disabled model.IsLoading
+                                                prop.text (if model.IsLoading then "Logging in..." else "Login")
+                                            ]
+                                            Html.div [ 
+                                                prop.className "text-center"
+                                                prop.children [
+                                                    Html.a [ 
+                                                        prop.className "text-blue-500 hover:text-blue-600 font-medium text-sm transition-colors duration-200"
+                                                        prop.href "#/register"
+                                                        prop.text "Don't have an account? Create one"
+                                                    ]
+                                                ]
+                                            ]
+                                        ]
+                                    ]
+                                ]
                             ]
                         ]
                     ]

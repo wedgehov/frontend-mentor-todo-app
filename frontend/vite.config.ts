@@ -12,4 +12,13 @@ export default defineConfig({
     }),
     react(),
   ],
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://localhost:5199',
+        changeOrigin: true,
+        secure: false,
+      }
+    }
+  }
 });
