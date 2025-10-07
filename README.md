@@ -40,6 +40,7 @@ Users should be able to:
 - **User Authentication**: Users can register for a new account and log in.
 - **Protected Routes**: The main todo list is only accessible to authenticated users.
 - **Multi-page Navigation**: The application uses routing to navigate between login, registration, and the main todo page.
+- **Database Migrations**: The database schema is managed using EF Core Migrations, allowing for version-controlled, incremental updates.
 
 ### Screenshot
 
@@ -89,6 +90,7 @@ This project was a great opportunity to build a complete, modern, full-stack app
 
 - **End-to-end F#:** Demonstrating the viability of F# for both frontend (via Fable) and backend development, enabling a consistent development experience.
 - **Elmish Architecture:** Implementing a robust and predictable state management pattern on the frontend.
+- **Database Migrations with EF Core:** Implementing a robust strategy for managing database schema changes, with different approaches for development and production environments.
 - **Secure Authentication Flow:** Building a complete user registration and login system with secure password hashing (BCrypt) and cookie-based sessions.
 - **Client-Side Routing:** Using `Elmish.UrlParser` to create a seamless multi-page experience within a single-page application, complete with protected routes that require authentication.
 - **Containerization with Docker:** Setting up a multi-container application with `docker-compose`, including a database, backend, and a frontend served by Nginx. This ensures a consistent development and deployment environment.
@@ -156,12 +158,42 @@ let start () =
     |> Program.run
 ```
 
+### Database Migration Strategy
+
+This project uses EF Core Migrations to manage the database schema. The strategy for applying migrations differs between development and production environments.
+
+#### Approach 1: Automatic Migration on Startup (For Local & Dev Environments)
+
+For local development (`docker-compose`) and the remote `dev` environment, the application is configured to automatically apply any pending migrations when it starts up. This is achieved by calling `dbContext.Database.Migrate()` in `Program.fs`.
+
+*   **Pros:**
+    *   **Simplicity & Convenience:** Extremely easy to set up and ensures the database is always in sync with the code after every deployment or restart, which is ideal for rapid iteration.
+*   **Cons & Caveats:**
+    *   **Not Safe for Multi-Replica Deployments:** This approach can cause race conditions and deployment failures if the application is running with more than one replica (pod in Kubernetes). The `dev` environment **must** be configured to run a single replica for this to be safe.
+    *   **Requires Elevated Permissions:** The application's database user needs permissions to alter the schema (`ALTER`, `CREATE`), which is not ideal from a security perspective.
+    *   **Hides Production Deployment Flow:** The deployment process for `dev` is different from how `test` and `prod` should be handled, which can mask potential issues.
+
+#### Approach 2: Kubernetes Job for Migrations (For Test, Staging & Production)
+
+For production-like environments, the recommended best practice is to decouple migration from the application startup.
+
+*   **How it Works:** The CI/CD pipeline first deploys a short-lived Kubernetes `Job` whose only task is to run the database migrations. Only after this job completes successfully does the pipeline proceed to deploy the new version of the main application.
+*   **Pros:**
+    *   **Safe for Production:** Eliminates race conditions, making it safe for multi-replica, high-availability setups.
+    *   **Improved Security:** Allows the migration job to use a database account with elevated permissions, while the main application runs with a less-privileged account that cannot alter the schema.
+    *   **Controlled Deployments:** Makes schema migration an explicit, visible step in the deployment process. If it fails, the application deployment is aborted, preventing the app from running against an incorrect schema.
+
+This project currently uses **Approach 1** for simplicity in the development phase. The transition to **Approach 2** is a planned step for when `test` and `prod` environments are configured.
+
+**Runtime Note (dev/docker-compose):** To ensure EF Core can discover the migrations assembly inside the Docker container, the application proactively loads the `Backend.DbMigrations.dll` at startup if it exists. This is a pragmatic workaround for the development environment. For Kubernetes test/staging/prod environments, migrations should be run via a dedicated Job before the application deploys, which is the recommended best practice.
+
 ### Continued development
 
 Future improvements could include:
 
 - Implementing the "drag and drop" functionality to reorder todos.
 - Writing more comprehensive tests for both frontend and backend.
+- Implementing the Kubernetes Job pattern (Approach 2) for database migrations as `test` and `prod` environments are introduced.
 
 ### Useful resources
 
@@ -176,7 +208,7 @@ Future improvements could include:
 ### Prerequisites
 
 - Docker
-- .NET 8 SDK (for local development without Docker)
+- .NET 9 SDK (for local development without Docker)
 - Node.js (for local development without Docker)
 
 ### Running Locally
@@ -198,9 +230,34 @@ The easiest way to run the entire application stack is with Docker Compose.
     -   Frontend: http://localhost:5173
     -   Backend API health check: http://localhost:5199
 
-The application will be running with the frontend communicating with the backend API inside the Docker network.
+On the first run, the backend service will automatically apply database migrations and seed a test user (`test@example.com` with password `secret123`).
 
-#### Viewing Logs
+### Managing Database Migrations
+
+EF Core tools (`dotnet-ef`) are used to create and manage migrations. The tools are installed as a local tool in the repository.
+
+1.  **Install EF Core Tools (if not already installed):**
+    ```bash
+    dotnet new tool-manifest
+    dotnet tool install dotnet-ef
+    ```
+
+2.  **Create a New Migration:**
+
+    After making changes to your entity models in `backend/Program.fs`, create a new migration by running the following command from the root of the repository:
+
+    ```bash
+    dotnet ef migrations add YourMigrationName --project backend/DbMigrations --startup-project backend
+    ```
+
+    This command tells `dotnet-ef` to:
+    - Compare the model against the last migration.
+    - Scaffold a new migration in the `backend/DbMigrations` project.
+    - Use the `backend` project's configuration to do so.
+
+The new migration will be applied automatically the next time the application starts in your development environment.
+
+### Viewing Logs
 
 To view the logs from the backend service during development, run the following command in a separate terminal:
 
@@ -208,12 +265,4 @@ To view the logs from the backend service during development, run the following 
 docker-compose logs -f backend
 ```
 
-This will stream the backend logs to your console. Since the environment is set to `Development` in `docker-compose.yml`, the logs will be human-readable and include detailed information like SQL query parameters, which is very useful for debugging.
-
-You can also view the frontend (Nginx) logs with `docker-compose logs -f frontend`.
-
-## Author
-
-- Website - Add your name here
-- Frontend Mentor - @yourusername
-- GitHub - @yourusername
+This will stream the backend logs to your console. Since the environment is set to `Development`

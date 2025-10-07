@@ -19,6 +19,9 @@ open Microsoft.AspNetCore.Authentication
 open Microsoft.AspNetCore.Authentication.Cookies
 open System.Security.Claims
 open BCrypt.Net
+open Microsoft.EntityFrameworkCore.Infrastructure
+open System.IO
+open System.Runtime.Loader
 
 // =====================
 // DTOs (wire format)
@@ -85,6 +88,21 @@ type AppDbContext(options: DbContextOptions<AppDbContext>) =
 // DB helpers
 // =====================
 
+let seedDevelopmentData (db: AppDbContext) = task {
+    // This function is idempotent. It won't fail if the user already exists.
+    let email = "test@example.com"
+    let! existingUser = db.Users.FirstOrDefaultAsync(fun u -> u.email = email)
+    if existingUser = null then
+        let logger = db.GetService<ILogger<AppDbContext>>()
+        logger.LogInformation("Seeding development user '{Email}'", email)
+        // Password is "secret123"
+        let passwordHash = BCrypt.HashPassword("secret123")
+        let devUser = { id = 0; email = email; passwordHash = passwordHash }
+        db.Users.Add(devUser) |> ignore
+        let! _ = db.SaveChangesAsync()
+        ()
+}
+
 let findUserByEmail (db : AppDbContext) (email : string) =
     db.Users.FirstOrDefaultAsync(fun u -> u.email = email)
 
@@ -145,15 +163,25 @@ let clearCompleted (db : AppDbContext) (userId : int) = task {
 
 let requiresAuthentication : HttpHandler =
     fun next ctx ->
-        if ctx.User.Identity <> null && ctx.User.Identity.IsAuthenticated then
+        let isAuthenticated =
+            match ctx.User with
+            | null -> false
+            | user ->
+                match user.Identity with
+                | null -> false
+                | identity -> identity.IsAuthenticated
+        if isAuthenticated then
             next ctx
         else
             (setStatusCode 401 >=> text "User not authenticated.") next ctx
 
 let getUserId (ctx: HttpContext) : int =
-    match ctx.User.FindFirst "UserId" with
-    | null -> failwith "UserId claim not found in token. This is unexpected for an authenticated user."
-    | claim -> Int32.Parse claim.Value
+    match ctx.User with
+    | null -> failwith "getUserId was called on an unauthenticated HttpContext. This indicates a programming error where an authenticated route did not use the 'requiresAuthentication' handler."
+    | user ->
+        match user.FindFirst "UserId" with
+        | null -> failwith "UserId claim not found in token. This is unexpected for an authenticated user."
+        | claim -> Int32.Parse claim.Value
 
 let handleGetTodos : HttpHandler = fun next ctx ->
     let db = ctx.GetService<AppDbContext>()
@@ -300,6 +328,17 @@ let webApp : HttpHandler =
 let main argv =
     let builder = WebApplication.CreateBuilder(argv)
 
+    // Manually load the migrations assembly in dev/runtime containers.
+    // Context: EF Core needs to load 'Backend.DbMigrations' at runtime to discover migrations.
+    // In some container publish layouts, the DLL isn't included in the .deps.json binding context,
+    // so we proactively load it here if the file exists. This is a pragmatic fix for dev/docker-compose.
+    // Production best practice: run migrations via a separate Kubernetes Job; then this load
+    // is not required because the app won't need to discover migrations at startup.
+    let migAssemblyName = "Backend.DbMigrations"
+    let migAssemblyPath = Path.Combine(AppContext.BaseDirectory, migAssemblyName + ".dll")
+    if File.Exists migAssemblyPath then
+        try AssemblyLoadContext.Default.LoadFromAssemblyPath(migAssemblyPath) |> ignore with _ -> ()
+
     // Use simple console logging in development for readability,
     // and JSON logging in production for structured data.
     builder.Logging.ClearProviders() |> ignore
@@ -359,8 +398,8 @@ let main argv =
     builder.Services.AddDbContext<AppDbContext>(fun (sp: IServiceProvider) (options: DbContextOptionsBuilder) ->
         let dataSource = sp.GetRequiredService<NpgsqlDataSource>()
         options.UseNpgsql(dataSource, fun npgsqlOptions ->
-            // If you wanted to use migrations, you would specify the assembly here
-            () // This lambda needs a body; () is the unit value.
+            // Point EF Core to the assembly where our migrations are located.
+            npgsqlOptions.MigrationsAssembly("Backend.DbMigrations") |> ignore
         ) |> ignore
     ) |> ignore
 
@@ -399,15 +438,11 @@ let main argv =
     let logger = scope.ServiceProvider.GetRequiredService<ILogger<AppDbContext>>()
     
     try
-        // This ensures the database is created, but doesn't handle schema updates.
-        // For production, `dbContext.Database.MigrateAsync()` is preferred.
-        let created = dbContext.Database.EnsureCreated()
-        if created then
-            logger.LogInformation("Database and tables created successfully")
-            printfn "Database and tables created successfully"
-        else
-            logger.LogInformation("Database already exists")
-            printfn "Database already exists"
+        // This applies any pending migrations to the database.
+        // It's convenient for development but not recommended for production.
+        dbContext.Database.Migrate()
+        logger.LogInformation("Database migrations applied successfully")
+        printfn "Database migrations applied successfully"
             
         // Test the connection by checking if we can connect to the database
         let canConnect = dbContext.Database.CanConnect()
@@ -431,6 +466,12 @@ let main argv =
 
     app.UseAuthentication() |> ignore
 
+    if app.Environment.IsDevelopment() then
+        // Seed development-specific data on startup.
+        use scope = app.Services.CreateScope()
+        let dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>()
+        seedDevelopmentData dbContext |> Async.AwaitTask |> Async.RunSynchronously
+    
     app.UseGiraffe webApp |> ignore
     app.Run()
     0
