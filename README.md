@@ -230,32 +230,37 @@ The easiest way to run the entire application stack is with Docker Compose.
     -   Frontend: http://localhost:5173
     -   Backend API health check: http://localhost:5199
 
-On the first run, the backend service will automatically apply database migrations and seed a test user (`test@example.com` with password `secret123`).
+On the first run, the backend service will automatically apply database migrations and seed a test user. You can log in with the following credentials:
+- **Email:** `test@example.com`
+- **Password:** `secret123`
 
 ### Managing Database Migrations
 
 EF Core tools (`dotnet-ef`) are used to create and manage migrations. The tools are installed as a local tool in the repository.
 
-1.  **Install EF Core Tools (if not already installed):**
-    ```bash
-    dotnet new tool-manifest
-    dotnet tool install dotnet-ef
-    ```
+#### Initial Setup (One-Time)
 
-2.  **Create a New Migration:**
+If you haven't done so, install the local `dotnet-ef` tool:
+```bash
+dotnet new tool-manifest
+dotnet tool install dotnet-ef
+```
 
-    After making changes to your entity models in `backend/Program.fs`, create a new migration by running the following command from the root of the repository:
+#### Workflow for Schema Changes
+
+When you make changes to your entity models in `backend/Program.fs` (e.g., adding a property to the `Todo` type), follow these steps to create and apply a new migration:
+
+1.  **Create a New Migration:**
+
+    Run the following command from the root of the repository. This will generate a new C# file in `backend/DbMigrations/Migrations` that represents the schema changes.
 
     ```bash
     dotnet ef migrations add YourMigrationName --project backend/DbMigrations --startup-project backend
     ```
 
-    This command tells `dotnet-ef` to:
-    - Compare the model against the last migration.
-    - Scaffold a new migration in the `backend/DbMigrations` project.
-    - Use the `backend` project's configuration to do so.
+2.  **Apply the Migration:**
 
-The new migration will be applied automatically the next time the application starts in your development environment.
+    The new migration will be applied automatically the next time you start the application with `docker-compose up`. The retry logic at startup will handle applying the new schema to the database.
 
 ### Viewing Logs
 
