@@ -437,26 +437,41 @@ let main argv =
     let dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>()
     let logger = scope.ServiceProvider.GetRequiredService<ILogger<AppDbContext>>()
     
-    try
-        // This applies any pending migrations to the database.
-        // It's convenient for development but not recommended for production.
-        dbContext.Database.Migrate()
-        logger.LogInformation("Database migrations applied successfully")
-        printfn "Database migrations applied successfully"
-            
-        // Test the connection by checking if we can connect to the database
-        let canConnect = dbContext.Database.CanConnect()
-        if canConnect then
-            logger.LogInformation("Database connection test successful")
-            printfn "Database connection test successful"
-        else
-            logger.LogWarning("Database connection test failed")
-            printfn "Database connection test failed"
-    with
-    | ex -> 
-        logger.LogError(ex, "Failed to initialize database")
-        printfn "Failed to initialize database: %s" ex.Message
-        reraise()
+    // Retry logic for database initialization to handle startup race conditions in Docker.
+    let maxRetries = 10
+    let delay = TimeSpan.FromSeconds(5.0)
+    let mutable retries = 0
+    let mutable connected = false
+
+    while not connected && retries < maxRetries do
+        try
+            // This applies any pending migrations to the database.
+            dbContext.Database.Migrate()
+            logger.LogInformation("Database migrations applied successfully")
+            printfn "Database migrations applied successfully"
+            connected <- true
+                
+            // Test the connection by checking if we can connect to the database
+            let canConnect = dbContext.Database.CanConnect()
+            if canConnect then
+                logger.LogInformation("Database connection test successful")
+                printfn "Database connection test successful"
+            else
+                logger.LogWarning("Database connection test failed")
+                printfn "Database connection test failed"
+        with
+        | ex -> 
+            retries <- retries + 1
+            logger.LogError(ex, "Failed to initialize database. Attempt {RetryCount}/{MaxRetries}", retries, maxRetries)
+            printfn "Failed to initialize database. Attempt %d/%d. Retrying in %f seconds..." retries maxRetries delay.TotalSeconds
+            if retries < maxRetries then
+                Task.Delay(delay).Wait()
+
+    if not connected then
+        let errorMsg = "Could not connect to the database after multiple retries. Exiting."
+        logger.LogCritical(errorMsg)
+        printfn "%s" errorMsg
+        Environment.Exit(1)
 
     // Add the /metrics endpoint for Prometheus
     app.UseOpenTelemetryPrometheusScrapingEndpoint() |> ignore
