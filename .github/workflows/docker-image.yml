@@ -1,0 +1,192 @@
+name: Docker Publish
+
+# This workflow runs on every push to the main branch and on version tags.
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - 'v*.*.*' # e.g. v1.0.0, v1.2.3
+
+jobs:
+  build-and-push:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+    outputs:
+      image_digest: ${{ steps.build.outputs.digest }}
+
+    # Permissions needed to push to GitHub Container Registry
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      # 1. Check out the repository code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Fetch all history for all tags and branches
+          fetch-depth: 0
+
+      # 2. Log in to the GitHub Container Registry
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 3. Extract metadata (tags, labels) for Docker
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            # Push a 'main' tag for pushes to the main branch
+            type=ref,event=branch,pattern=main
+            # Push a 'vX.Y.Z' tag for version tags
+            type=semver,pattern={{raw}}
+
+      # 4. Build and push the Docker image
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      # 5. Keep a small rollback window for mutable main deployments.
+      # We delete only untagged versions and keep the newest ones.
+      - name: Prune old untagged GHCR versions
+        if: github.ref == 'refs/heads/main'
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const keepUntagged = 10;
+            const owner = context.repo.owner;
+            const packageName = context.repo.repo;
+            const isOrg = context.payload.repository.owner.type === "Organization";
+
+            const listVersions = async (page) => {
+              if (isOrg) {
+                return github.rest.packages.getAllPackageVersionsForPackageOwnedByOrg({
+                  org: owner,
+                  package_type: "container",
+                  package_name: packageName,
+                  per_page: 100,
+                  page,
+                });
+              }
+              return github.rest.packages.getAllPackageVersionsForPackageOwnedByUser({
+                username: owner,
+                package_type: "container",
+                package_name: packageName,
+                per_page: 100,
+                page,
+              });
+            };
+
+            const deleteVersion = async (packageVersionId) => {
+              if (isOrg) {
+                return github.rest.packages.deletePackageVersionForOrg({
+                  org: owner,
+                  package_type: "container",
+                  package_name: packageName,
+                  package_version_id: packageVersionId,
+                });
+              }
+              return github.rest.packages.deletePackageVersionForUser({
+                username: owner,
+                package_type: "container",
+                package_name: packageName,
+                package_version_id: packageVersionId,
+              });
+            };
+
+            const versions = [];
+            for (let page = 1; ; page += 1) {
+              const response = await listVersions(page);
+              if (response.data.length === 0) break;
+              versions.push(...response.data);
+            }
+
+            const untagged = versions
+              .filter(v => ((v.metadata?.container?.tags ?? []).length === 0))
+              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+            const toDelete = untagged.slice(keepUntagged);
+            core.info(`Untagged versions: ${untagged.length}. Keeping newest ${Math.min(keepUntagged, untagged.length)}.`);
+
+            for (const version of toDelete) {
+              await deleteVersion(version.id);
+              core.info(`Deleted untagged version id=${version.id}`);
+            }
+
+  update-gitops-main:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout gitops repository
+        uses: actions/checkout@v4
+        with:
+          repository: wedgehov/gitops
+          token: ${{ secrets.GITOPS_REPO_TOKEN }}
+          ref: main
+          path: gitops
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Update main digest and render manifests
+        env:
+          IMAGE_DIGEST: ${{ needs.build-and-push.outputs.image_digest }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          import re
+
+          values_path = Path("gitops/values/user/fm-todo-app/main.yaml")
+          digest = os.environ["IMAGE_DIGEST"].strip()
+          if not digest:
+              raise SystemExit("IMAGE_DIGEST is empty.")
+
+          text = values_path.read_text(encoding="utf-8")
+          if "digest:" not in text:
+              raise SystemExit("Expected image.digest field in values/user/fm-todo-app/main.yaml")
+
+          updated = re.sub(r'^(\s*digest:\s*).*$',
+                           f'\\1"{digest}"',
+                           text,
+                           flags=re.MULTILINE)
+          values_path.write_text(updated, encoding="utf-8")
+          PY
+
+          cd gitops
+          mkdir -p rendered-manifests/main/user/fm-todo-app
+          helm template fm-todo-app-main ./charts/fm-todo-app --namespace fm-todo-app-main -f ./values/user/fm-todo-app/main.yaml > ./rendered-manifests/main/user/fm-todo-app/rendered.yaml
+
+      - name: Commit and push gitops updates
+        env:
+          IMAGE_DIGEST: ${{ needs.build-and-push.outputs.image_digest }}
+        run: |
+          set -euo pipefail
+          cd gitops
+
+          if git diff --quiet -- values/user/fm-todo-app/main.yaml rendered-manifests/main/user/fm-todo-app/rendered.yaml; then
+            echo "No gitops changes detected."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add values/user/fm-todo-app/main.yaml rendered-manifests/main/user/fm-todo-app/rendered.yaml
+          git commit -m "chore(fm-todo-app): update main image digest to ${IMAGE_DIGEST}"
+          git push origin main

@@ -14,6 +14,7 @@ open Microsoft.EntityFrameworkCore
 open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
+open Microsoft.AspNetCore.Hosting
 open Microsoft.Extensions.Logging
 open Npgsql
 
@@ -21,7 +22,6 @@ type AppDbContext = Entity.AppDbContext
 
 let webApp: HttpHandler =
     choose [
-        route "/" >=> text "OK"
         subRoute
             "/api/auth"
             (choose [
@@ -40,6 +40,16 @@ let webApp: HttpHandler =
                  DELETE >=> route "/completed" >=> global.Todos.handleClearCompleted
                  PATCH >=> routef "/%i" global.Todos.handlePatchTodo
              ])
+
+        // Fallback for SPA routing
+        fun next ctx ->
+            let env = ctx.RequestServices.GetRequiredService<IWebHostEnvironment>()
+            let webRoot = if String.IsNullOrEmpty(env.WebRootPath) then Path.Combine(env.ContentRootPath, "wwwroot") else env.WebRootPath
+            let path = Path.Combine(webRoot, "index.html")
+            if File.Exists(path) then
+                htmlFile path next ctx
+            else
+                (setStatusCode 404 >=> text "Not Found") next ctx
     ]
 
 [<EntryPoint>]
@@ -168,6 +178,7 @@ let main argv =
     Observability.addPrometheusEndpoint app
     app.UseCors() |> ignore
     app.UseAuthentication() |> ignore
+    app.UseStaticFiles() |> ignore
 
     if app.Environment.IsDevelopment() then
         use scope = app.Services.CreateScope()

@@ -17,11 +17,11 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
-  backend:
+  app:
     build:
       context: .
-      dockerfile: Backend/Server/Dockerfile
-    container_name: todo_backend
+      dockerfile: Dockerfile
+    container_name: todo_app
     restart: always
     ports:
       - "5199:8080" # Map container's HTTP port 8080 to host's 5199
@@ -32,19 +32,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-
-  frontend:
-    build:
-      context: .
-      dockerfile: Client/Dockerfile
-    container_name: todo_frontend
-    restart: always
-    ports:
-      - "5173:80" # Map container's Nginx port 80 to host's 5173
-    environment:
-      - API_URL=http://backend:8080
-    depends_on:
-      - backend
 
 volumes:
   postgres_data:
