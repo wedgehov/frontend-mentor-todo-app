@@ -6,6 +6,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="Dtos.fs" />
+    <Compile Include="Data.fs" />
+    <Compile Include="Auth.fs" />
+    <Compile Include="Todos.fs" />
+    <Compile Include="Logger.fs" />
+    <Compile Include="Observability.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
@@ -27,5 +33,9 @@
     <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.9.0" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Process" Version="1.10.0-beta.1" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.9.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Entity\Entity.fsproj" />
   </ItemGroup>
 </Project>

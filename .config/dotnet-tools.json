@@ -8,6 +8,13 @@
         "dotnet-ef"
       ],
       "rollForward": false
+    },
+    "fantomas": {
+      "version": "7.0.3",
+      "commands": [
+        "fantomas"
+      ],
+      "rollForward": false
     }
   }
 }

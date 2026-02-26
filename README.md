@@ -99,7 +99,7 @@ This project was a great opportunity to build a complete, modern, full-stack app
 Here's a snippet from the backend showing the Giraffe route handler for user registration:
 
 ```fsharp
-// backend/Program.fs
+// Backend/Server/Program.fs
 
 let handleRegister : HttpHandler = fun next ctx -> task {
     let db = ctx.GetService<AppDbContext>()
@@ -116,7 +116,7 @@ let handleRegister : HttpHandler = fun next ctx -> task {
             let newUser = { id = 0; email = req.email; passwordHash = passwordHash }
             db.Users.Add(newUser) |> ignore
             let! _ = db.SaveChangesAsync()
-            
+
             // Sign in the user after successful registration
             let claims =
                 [ Claim(ClaimTypes.Name, newUser.email)
@@ -124,7 +124,7 @@ let handleRegister : HttpHandler = fun next ctx -> task {
             let identity = ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme)
             let principal = ClaimsPrincipal(identity)
             do! ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal)
-            
+
             return! (setStatusCode 201 >=> json newUser) next ctx
 }
 ```
@@ -132,7 +132,7 @@ let handleRegister : HttpHandler = fun next ctx -> task {
 And the corresponding routing and page navigation logic on the frontend using Elmish:
 
 ```fsharp
-// frontend/src/Program.fs
+// Client/src/Program.fs
 
 let urlUpdate (result: Page option) (model: Model) : Model * Cmd<Msg> =
     match result with
@@ -234,6 +234,18 @@ On the first run, the backend service will automatically apply database migratio
 - **Email:** `test@example.com`
 - **Password:** `secret123`
 
+#### Frontend-only workflow (npm)
+
+If you only want to run or build the frontend locally:
+
+```bash
+cd Client
+npm install
+npm run dev
+# or
+npm run build
+```
+
 ### Managing Database Migrations
 
 EF Core tools (`dotnet-ef`) are used to create and manage migrations. The tools are installed as a local tool in the repository.
@@ -248,14 +260,14 @@ dotnet tool install dotnet-ef
 
 #### Workflow for Schema Changes
 
-When you make changes to your entity models in `backend/Program.fs` (e.g., adding a property to the `Todo` type), follow these steps to create and apply a new migration:
+When you make changes to your entity models in `Backend/Entity` (e.g., adding a property to the `Todo` type in `Entities.fs`), follow these steps to create and apply a new migration:
 
 1.  **Create a New Migration:**
 
-    Run the following command from the root of the repository. This will generate a new C# file in `backend/DbMigrations/Migrations` that represents the schema changes.
+    Run the following command from the root of the repository. This will generate a new C# file in `Backend/Entity/DbMigrations/Migrations` that represents the schema changes.
 
     ```bash
-    dotnet ef migrations add YourMigrationName --project backend/DbMigrations --startup-project backend
+    dotnet ef migrations add YourMigrationName --project Backend/Entity/Migrations/Backend.Migrations.csproj --startup-project Backend/Server/backend.fsproj --output-dir .
     ```
 
 2.  **Apply the Migration:**

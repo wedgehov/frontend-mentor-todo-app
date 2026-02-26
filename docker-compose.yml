@@ -19,8 +19,8 @@ services:
 
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: Backend/Server/Dockerfile
     container_name: todo_backend
     restart: always
     ports:
@@ -35,8 +35,8 @@ services:
 
   frontend:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: Client/Dockerfile
     container_name: todo_frontend
     restart: always
     ports:

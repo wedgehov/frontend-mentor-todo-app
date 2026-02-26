@@ -1,0 +1,25 @@
+# Prevent host-specific artifacts from being copied into Docker build contexts
+
+# Client dependencies and build outputs
+Client/node_modules
+Client/dist
+Client/.vite
+Client/.fable
+
+# Server/Entity build outputs
+Backend/Server/bin
+Backend/Server/obj
+Backend/Entity/bin
+Backend/Entity/obj
+
+# Top-level caches
+node_modules
+dist
+.vite
+.fable
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
