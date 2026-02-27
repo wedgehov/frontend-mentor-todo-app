@@ -1,85 +1,95 @@
 module Todos
 
-open System
 open Data
-open Dtos
-open Entity
+open FsToolkit.ErrorHandling
 open Giraffe
-open Microsoft.Extensions.DependencyInjection
+open System.Threading.Tasks
+open Shared
 
-let handleGetTodos: HttpHandler =
-    fun next ctx ->
-        let db = ctx.GetService<AppDbContext>()
-        let userId = Auth.getUserId ctx
+let private toSharedTodo (todo: Entity.Todo) : Todo = {
+    Id = todo.Id
+    Text = todo.Text
+    Completed = todo.Completed
+}
 
-        task {
-            let! todos = getAllTodos db userId
-            return! json todos next ctx
-        }
+let private requireUserId ctx =
+    Auth.tryGetUserId ctx |> AsyncResult.ofResult
 
-let handleCreateTodo: HttpHandler =
-    fun next ctx ->
-        task {
-            let db = ctx.GetService<AppDbContext>()
-            let userId = Auth.getUserId ctx
-            let! payload = ctx.BindJsonAsync<NewTodo>()
+let private fromTask (work: Task<'a>) =
+    work |> Async.AwaitTask |> AsyncResult.ofAsync
 
-            if String.IsNullOrWhiteSpace payload.text then
-                return! (setStatusCode 400 >=> text "text is required") next ctx
-            else
-                let! created = insertTodo db userId payload.text
+let private getTodos ctx db () =
+    asyncResult {
+        let! userId = requireUserId ctx
+        let! todos = getAllTodos db userId |> fromTask
+        return todos |> Seq.map toSharedTodo |> List.ofSeq
+    }
 
-                return!
-                    (setStatusCode 201
-                     >=> setHttpHeader "Location" (sprintf "/api/todos/%d" created.Id)
-                     >=> json created)
-                        next
-                        ctx
-        }
+let private createTodo ctx db payload =
+    asyncResult {
+        let! userId = requireUserId ctx
 
-let handlePatchTodo (id: int) : HttpHandler =
-    fun next ctx ->
-        task {
-            let db = ctx.GetService<AppDbContext>()
-            let userId = Auth.getUserId ctx
-            let! patch = ctx.BindJsonAsync<UpdateTodo>()
-            let! updated = updateTodo db userId id patch
+        if System.String.IsNullOrWhiteSpace payload.Text then
+            return! Error(ValidationError "Todo text is required.")
 
-            match updated with
-            | Some todo -> return! json todo next ctx
-            | None -> return! (setStatusCode 404 >=> text "Not found") next ctx
-        }
+        let! created = insertTodo db userId payload.Text |> fromTask
+        return toSharedTodo created
+    }
 
-let handleDeleteTodo (id: int) : HttpHandler =
-    fun next ctx ->
-        task {
-            let db = ctx.GetService<AppDbContext>()
-            let userId = Auth.getUserId ctx
-            let! ok = deleteTodo db userId id
+let private toggleTodoById ctx db id =
+    asyncResult {
+        let! userId = requireUserId ctx
+        let! updated = toggleTodo db userId id |> fromTask
 
-            if ok then
-                return! (setStatusCode 204 >=> text "") next ctx
-            else
-                return! (setStatusCode 404 >=> text "Not found") next ctx
-        }
+        match updated with
+        | Some todo -> return toSharedTodo todo
+        | None -> return! Error NotFound
+    }
 
-let handleToggleTodo (id: int) : HttpHandler =
-    fun next ctx ->
-        task {
-            let db = ctx.GetService<AppDbContext>()
-            let userId = Auth.getUserId ctx
-            let! res = toggleTodo db userId id
+let private deleteTodoById ctx db id =
+    asyncResult {
+        let! userId = requireUserId ctx
+        let! deleted = deleteTodo db userId id |> fromTask
 
-            match res with
-            | Some todo -> return! json todo next ctx
-            | None -> return! (setStatusCode 404 >=> text "Not found") next ctx
-        }
+        if not deleted then
+            return! Error NotFound
 
-let handleClearCompleted: HttpHandler =
-    fun next ctx ->
-        task {
-            let db = ctx.GetService<AppDbContext>()
-            let userId = Auth.getUserId ctx
-            do! clearCompleted db userId
-            return! (setStatusCode 204 >=> text "") next ctx
-        }
+        return ()
+    }
+
+let private clearCompletedTodos ctx db () =
+    asyncResult {
+        let! userId = requireUserId ctx
+        do! clearCompleted db userId |> fromTask
+        return ()
+    }
+
+let private moveTodoByPosition ctx db payload =
+    asyncResult {
+        let! userId = requireUserId ctx
+
+        if payload.NewPosition < 0 then
+            return! Error(ValidationError "Todo position must be non-negative.")
+
+        let! moved = moveTodo db userId payload.TodoId payload.NewPosition |> fromTask
+
+        if not moved then
+            return! Error NotFound
+
+        return ()
+    }
+
+let todoApiImplementation (ctx: Microsoft.AspNetCore.Http.HttpContext) : ITodoApi =
+    let db = ctx.GetService<Entity.AppDbContext>()
+
+    {
+        GetTodos = getTodos ctx db
+        CreateTodo = createTodo ctx db
+        ToggleTodo = toggleTodoById ctx db
+        DeleteTodo = deleteTodoById ctx db
+        ClearCompleted = clearCompletedTodos ctx db
+        MoveTodo = moveTodoByPosition ctx db
+    }
+
+let todosApiHandler: HttpHandler =
+    RemotingUtil.handlerFromApi todoApiImplementation

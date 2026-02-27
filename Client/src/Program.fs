@@ -3,9 +3,8 @@ module App
 open Elmish
 open Elmish.React
 open Elmish.Navigation
-open Elmish.UrlParser
-open Feliz
 open Shared
+open ClientShared
 
 // Main model
 type Page =
@@ -27,7 +26,6 @@ type Msg =
   | TodosMsg of TodosPage.Msg
   | LoginMsg of LoginPage.Msg
   | RegisterMsg of RegisterPage.Msg
-  | LoggedIn of User
   | LoggedOut
   | RequestLogout
   | LoadTodos
@@ -73,6 +71,14 @@ let urlUpdate (result: Page option) (model: Model) : Model * Cmd<Msg> =
 
   | None -> model, Cmd.none // No page found, do nothing
 
+let private loginSucceeded (model: Model) : Model * Cmd<Msg> =
+  let (newModel, newCmd) = urlUpdate (Some TodosPage) model
+  newModel,
+  Cmd.batch [
+    newCmd
+    Cmd.ofMsg LoadTodos
+  ]
+
 // Init
 let init (result: Option<Page>) : Model * Cmd<Msg> =
   let page = result |> Option.defaultValue TodosPage
@@ -87,18 +93,10 @@ let init (result: Option<Page>) : Model * Cmd<Msg> =
   }
   let (newModel, routeCmd) = urlUpdate (Some page) model
 
-  // Check if user is already authenticated and load todos if so
-  let authCheckCmd =
-    if newModel.User.IsSome then
-      Cmd.ofMsg LoadTodos
-    else
-      Cmd.none
-
   newModel,
   Cmd.batch [
     todosCmd |> Cmd.map TodosMsg
     routeCmd
-    authCheckCmd
   ]
 
 // Update
@@ -120,13 +118,11 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
     // Check if login was successful
     match loginMsg with
     | LoginPage.LoginResult (Ok user) ->
-      let (newModel, newCmd) =
-        urlUpdate (Some TodosPage) {model with User = Some user; Login = newLoginModel}
+      let (newModel, newCmd) = loginSucceeded {model with User = Some user; Login = newLoginModel}
       newModel,
       Cmd.batch [
-        newCmd
         Cmd.map LoginMsg newLoginCmd
-        Cmd.ofMsg LoadTodos
+        newCmd
       ]
     | _ -> {model with Login = newLoginModel}, Cmd.map LoginMsg newLoginCmd
 
@@ -136,21 +132,14 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
     // Check if registration was successful
     match registerMsg with
     | RegisterPage.RegisterResult (Ok user) ->
-      let (newModel, newCmd) =
-        urlUpdate (Some TodosPage) {model with User = Some user; Register = newRegisterModel}
+      let (newModel, newCmd) = loginSucceeded {model with User = Some user; Register = newRegisterModel}
       newModel,
       Cmd.batch [
-        newCmd
         Cmd.map RegisterMsg newRegisterCmd
-        Cmd.ofMsg LoadTodos
+        newCmd
       ]
     | _ -> {model with Register = newRegisterModel}, Cmd.map RegisterMsg newRegisterCmd
 
-  | LoggedIn user ->
-    {model with User = Some user},
-    Cmd.batch [
-      Cmd.ofMsg LoadTodos // Load todos when user logs in
-    ]
   | LoggedOut ->
     // When logged out, clear the user, re-init todos and navigate to the login page
     let (newTodosModel, _) = TodosPage.init model.Theme

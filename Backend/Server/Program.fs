@@ -5,7 +5,6 @@ open System.IO
 open System.Runtime.Loader
 open System.Threading.Tasks
 open Data
-open Entity
 open Giraffe
 open Microsoft.AspNetCore.Authentication.Cookies
 open Microsoft.AspNetCore.Builder
@@ -22,24 +21,8 @@ type AppDbContext = Entity.AppDbContext
 
 let webApp: HttpHandler =
     choose [
-        subRoute
-            "/api/auth"
-            (choose [
-                POST >=> route "/register" >=> global.Auth.handleRegister
-                POST >=> route "/login" >=> global.Auth.handleLogin
-                POST >=> route "/logout" >=> global.Auth.handleLogout
-            ])
-        subRoute
-            "/api/todos"
-            (global.Auth.requiresAuthentication
-             >=> choose [
-                 GET >=> route "" >=> global.Todos.handleGetTodos
-                 POST >=> route "" >=> global.Todos.handleCreateTodo
-                 PUT >=> routef "/%i/toggle" global.Todos.handleToggleTodo
-                 DELETE >=> routef "/%i" global.Todos.handleDeleteTodo
-                 DELETE >=> route "/completed" >=> global.Todos.handleClearCompleted
-                 PATCH >=> routef "/%i" global.Todos.handlePatchTodo
-             ])
+        global.Auth.authApiHandler
+        routeStartsWith "/api/ITodoApi" >=> global.Auth.requiresAuthentication >=> global.Todos.todosApiHandler
 
         // Fallback for SPA routing
         fun next ctx ->
@@ -56,7 +39,7 @@ let webApp: HttpHandler =
 let main argv =
     let builder = WebApplication.CreateBuilder(argv)
 
-    let migAssemblyName = "Backend.Migrations"
+    let migAssemblyName = "Entity"
     let migAssemblyPath =
         Path.Combine(AppContext.BaseDirectory, migAssemblyName + ".dll")
 
@@ -91,7 +74,7 @@ let main argv =
 
         options.UseNpgsql(
             dataSource,
-            fun npgsqlOptions -> npgsqlOptions.MigrationsAssembly("Backend.Migrations") |> ignore
+            fun npgsqlOptions -> npgsqlOptions.MigrationsAssembly("Entity") |> ignore
         )
         |> ignore
     )

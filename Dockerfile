@@ -5,17 +5,13 @@ WORKDIR /app/Client
 # Install .NET SDK 9, which is required by vite-plugin-fable to build its daemon
 RUN apk add --no-cache dotnet9-sdk
 
-# Prevent .NET first-run output from polluting daemon protocol stdout
-ENV DOTNET_NOLOGO=1
-ENV DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
-ENV DOTNET_CLI_TELEMETRY_OPTOUT=1
-
 # Copy package files and install dependencies
 COPY Client/package.json Client/package-lock.json ./
 RUN npm install
 
 # Copy the rest of the application source code
 COPY Client .
+COPY Shared /app/Shared
 
 # Build the application using Vite
 RUN npm run build
@@ -27,9 +23,9 @@ WORKDIR /src
 # Copy solution and project files to restore dependencies
 COPY FrontendMentorTodoApp.sln .
 COPY Backend/Server/backend.fsproj Backend/Server/
-COPY Backend/Entity/Entity.fsproj Backend/Entity/
-COPY Backend/Entity/Migrations/Backend.Migrations.csproj Backend/Entity/Migrations/
+COPY Backend/Entity/Entity.csproj Backend/Entity/
 COPY Client/src/src.fsproj Client/src/
+COPY Shared/Shared.fsproj Shared/
 
 # Restore dependencies
 RUN dotnet restore
@@ -39,9 +35,6 @@ COPY . .
 
 # Publish the backend application
 RUN dotnet publish Backend/Server/backend.fsproj -c Release -o /app/publish
-# Publish migrations to get the dll
-RUN dotnet publish Backend/Entity/Migrations/Backend.Migrations.csproj -c Release -o /tmp/mig
-RUN cp /tmp/mig/Backend.Migrations.dll /app/publish/
 
 # Stage 3: Final runtime image
 FROM mcr.microsoft.com/dotnet/aspnet:9.0

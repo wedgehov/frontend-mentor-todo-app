@@ -1,99 +1,37 @@
 module Auth
 
 open Elmish
-open Json
-open Fable.Core
-open Fable.SimpleHttp
-open Fable.Core.JsInterop
 open Shared
 
-type LoginRequest = {email: string; password: string}
-type RegisterRequest = {email: string; password: string}
+let appErrorToMessage (error: AppError) =
+  match error with
+  | Unauthorized -> "Unauthorized."
+  | NotFound -> "Not found."
+  | Conflict -> "A user with that email already exists."
+  | InvalidCredentials -> "Invalid credentials."
+  | ValidationError msg -> msg
+  | Unexpected msg -> msg
 
-let private is2xx (status: int) = status >= 200 && status < 300
-let private bodyOrEmpty (s: string) = if isNull s then "" else s
+let private toUnexpected onResult (ex: exn) =
+  onResult (Error (Unexpected ex.Message))
 
-let private parseUserObj (o: obj) : User = {
-  Id = getFirst<int> o ["id"; "Id"] |> Option.defaultValue 0
-  Email =
-    getFirst<string> o ["email"; "Email"]
-    |> Option.defaultValue ""
-}
+let login (req: LoginRequest) (onResult: Result<User, AppError> -> 'msg) : Cmd<'msg> =
+  Cmd.OfAsync.either
+    ApiClient.AuthApi.Login
+    req
+    onResult
+    (toUnexpected onResult)
 
-let private parseUserJson (json: string) : Result<User, exn> =
-  try
-    Ok (JS.JSON.parse (json) |> parseUserObj)
-  with e ->
-    // Add more context to the error
-    let msg = sprintf "Failed to parse User JSON. Error: %s. JSON: %s" e.Message json
-    Error (exn msg)
+let register (req: RegisterRequest) (onResult: Result<User, AppError> -> 'msg) : Cmd<'msg> =
+  Cmd.OfAsync.either
+    ApiClient.AuthApi.Register
+    req
+    onResult
+    (toUnexpected onResult)
 
-let login (req: LoginRequest) (onResult: Result<User, exn> -> 'msg) : Cmd<'msg> =
-  let fetch () =
-    async {
-      let! res =
-        Http.request "/api/auth/login"
-        |> Http.method POST
-        |> Http.header (Headers.contentType "application/json")
-        |> Http.content (
-          BodyContent.Text (
-            JS.JSON.stringify (
-              createObj [
-                "email" ==> req.email
-                "password" ==> req.password
-              ]
-            )
-          )
-        )
-        |> Http.send
-      let status = res.statusCode
-      let body = bodyOrEmpty res.responseText
-      if not (is2xx status) then
-        return Error (exn (sprintf "HTTP %d: %s" status body))
-      else
-        return parseUserJson body
-    }
-  Cmd.OfAsync.either fetch () onResult (fun ex -> onResult (Error ex))
-
-let register (req: RegisterRequest) (onResult: Result<User, exn> -> 'msg) : Cmd<'msg> =
-  let fetch () =
-    async {
-      let! res =
-        Http.request "/api/auth/register"
-        |> Http.method POST
-        |> Http.header (Headers.contentType "application/json")
-        |> Http.content (
-          BodyContent.Text (
-            JS.JSON.stringify (
-              createObj [
-                "email" ==> req.email
-                "password" ==> req.password
-              ]
-            )
-          )
-        )
-        |> Http.send
-      let status = res.statusCode
-      let body = bodyOrEmpty res.responseText
-      if not (is2xx status) then
-        return Error (exn (sprintf "HTTP %d: %s" status body))
-      else
-        return parseUserJson body
-    }
-  Cmd.OfAsync.either fetch () onResult (fun ex -> onResult (Error ex))
-
-let logout (onResult: Result<unit, exn> -> 'msg) : Cmd<'msg> =
-  let fetch () =
-    async {
-      let! res =
-        Http.request "/api/auth/logout"
-        |> Http.method POST
-        |> Http.send
-      let status = res.statusCode
-      let body = bodyOrEmpty res.responseText
-      if not (is2xx status) then
-        return Error (exn (sprintf "HTTP %d: %s" status body))
-      else
-        return Ok ()
-    }
-  Cmd.OfAsync.either fetch () onResult (fun ex -> onResult (Error ex))
+let logout (onResult: Result<unit, AppError> -> 'msg) : Cmd<'msg> =
+  Cmd.OfAsync.either
+    ApiClient.AuthApi.Logout
+    ()
+    onResult
+    (toUnexpected onResult)

@@ -27,7 +27,7 @@ type Msg =
   | SetPassword of string
   | SetConfirmPassword of string
   | AttemptRegister
-  | RegisterResult of Result<User, exn>
+  | RegisterResult of Result<User, AppError>
 
 // Update
 let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
@@ -40,12 +40,18 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
       {model with Error = Some "Passwords do not match"}, Cmd.none
     else
       {model with IsLoading = true; Error = None},
-      Auth.register {email = model.Email; password = model.Password} RegisterResult
-  | RegisterResult (Ok user) ->
+      Auth.register
+        {
+          Email = model.Email
+          Password = model.Password
+        }
+        RegisterResult
+  | RegisterResult (Ok _) ->
     // This message should be bubbled up to the main update function
     // to navigate to the todos page and store the user.
     {model with IsLoading = false}, Cmd.none
-  | RegisterResult (Error ex) -> {model with IsLoading = false; Error = Some ex.Message}, Cmd.none
+  | RegisterResult (Error err) ->
+    {model with IsLoading = false; Error = Some (Auth.appErrorToMessage err)}, Cmd.none
 
 // View
 let view (model: Model) (dispatch: Msg -> unit) =

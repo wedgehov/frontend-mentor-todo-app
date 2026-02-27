@@ -2,16 +2,15 @@ module Auth
 
 open System
 open System.Security.Claims
-open System.Threading.Tasks
 open BCrypt.Net
-open Dtos
 open Data
-open Entity
+open FsToolkit.ErrorHandling
 open Giraffe
 open Microsoft.AspNetCore.Authentication
 open Microsoft.AspNetCore.Authentication.Cookies
 open Microsoft.AspNetCore.Http
-open Microsoft.Extensions.DependencyInjection
+open System.Threading.Tasks
+open Shared
 
 let requiresAuthentication: HttpHandler =
     fun next ctx ->
@@ -30,102 +29,98 @@ let requiresAuthentication: HttpHandler =
         else
             (setStatusCode 401 >=> text "User not authenticated.") next ctx
 
-let getUserId (ctx: HttpContext) : int =
+let tryGetUserId (ctx: HttpContext) : Result<int, AppError> =
     let user = ctx.User
 
     if isNull (box user) then
-        failwith
-            "getUserId was called on an unauthenticated HttpContext. This indicates a programming error where an authenticated route did not use the 'requiresAuthentication' handler."
+        Error Unauthorized
     else
         match user.FindFirst "UserId" with
-        | null ->
-            failwith
-                "UserId claim not found in token. This is unexpected for an authenticated user."
-        | claim -> Int32.Parse claim.Value
+        | null -> Error Unauthorized
+        | claim ->
+            match Int32.TryParse claim.Value with
+            | true, userId -> Ok userId
+            | false, _ -> Error Unauthorized
 
-let handleRegister: HttpHandler =
-    fun next ctx ->
-        task {
-            let db = ctx.GetService<AppDbContext>()
-            let! req = ctx.BindJsonAsync<RegisterUserRequest>()
+let private toSharedUser (user: Entity.User) : User = {
+    Id = user.Id
+    Email = user.Email
+}
 
-            if String.IsNullOrWhiteSpace(req.email) || String.IsNullOrWhiteSpace(req.password) then
-                return! (setStatusCode 400 >=> text "Email and password are required.") next ctx
-            else
-                let! existingUser = findUserByEmail db req.email
+let private fromTask (work: Task<'a>) =
+    work |> Async.AwaitTask |> AsyncResult.ofAsync
 
-                if existingUser <> null then
-                    return!
-                        (setStatusCode 409 >=> text "A user with that email already exists.")
-                            next
-                            ctx
-                else
-                    let passwordHash = BCrypt.HashPassword(req.password)
-                    let newUser = {
-                        Id = 0
-                        Email = req.email
-                        PasswordHash = passwordHash
-                    }
-                    db.Users.Add(newUser) |> ignore
-                    let! _ = db.SaveChangesAsync()
+let private fromTaskUnit (work: Task) =
+    work |> Async.AwaitTask |> AsyncResult.ofAsync
 
-                    let claims = [
-                        Claim(ClaimTypes.Name, newUser.Email)
-                        Claim("UserId", newUser.Id.ToString())
-                    ]
+let private createPrincipal (email: string) (userId: int) =
+    let claims = [
+        Claim(ClaimTypes.Name, email)
+        Claim("UserId", userId.ToString())
+    ]
 
-                    let identity =
-                        ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme)
-                    let principal = ClaimsPrincipal(identity)
-                    do!
-                        ctx.SignInAsync(
-                            CookieAuthenticationDefaults.AuthenticationScheme,
-                            principal
-                        )
+    let identity =
+        ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme)
 
-                    return! (setStatusCode 201 >=> json newUser) next ctx
-        }
+    ClaimsPrincipal(identity)
 
-let handleLogin: HttpHandler =
-    fun next ctx ->
-        task {
-            let db = ctx.GetService<AppDbContext>()
-            let! req = ctx.BindJsonAsync<LoginUserRequest>()
+let private signInUser (ctx: HttpContext) (user: Entity.User) =
+    let principal = createPrincipal user.Email user.Id
+    ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal) |> fromTaskUnit
 
-            if String.IsNullOrWhiteSpace(req.email) || String.IsNullOrWhiteSpace(req.password) then
-                return! (setStatusCode 401 >=> text "Invalid credentials.") next ctx
-            else
-                let! user = findUserByEmail db req.email
+let private register (ctx: HttpContext) (db: Entity.AppDbContext) (req: RegisterRequest) =
+    asyncResult {
+        if String.IsNullOrWhiteSpace(req.Email) || String.IsNullOrWhiteSpace(req.Password) then
+            return! Error(ValidationError "Email and password are required.")
 
-                match Option.ofObj user with
-                | None -> return! (setStatusCode 401 >=> text "Invalid credentials.") next ctx
-                | Some user ->
-                    if BCrypt.Verify(req.password, user.PasswordHash) then
-                        let claims = [
-                            Claim(ClaimTypes.Name, user.Email)
-                            Claim("UserId", user.Id.ToString())
-                        ]
+        let! existingUser = findUserByEmail db req.Email |> fromTask
 
-                        let identity =
-                            ClaimsIdentity(
-                                claims,
-                                CookieAuthenticationDefaults.AuthenticationScheme
-                            )
+        if not (isNull existingUser) then
+            return! Error Conflict
 
-                        let principal = ClaimsPrincipal(identity)
-                        do!
-                            ctx.SignInAsync(
-                                CookieAuthenticationDefaults.AuthenticationScheme,
-                                principal
-                            )
-                        return! json user next ctx
-                    else
-                        return! (setStatusCode 401 >=> text "Invalid credentials.") next ctx
-        }
+        let passwordHash = BCrypt.HashPassword(req.Password)
+        let newUser = Entity.User()
+        newUser.Email <- req.Email
+        newUser.PasswordHash <- passwordHash
+        db.Users.Add(newUser) |> ignore
 
-let handleLogout: HttpHandler =
-    fun next ctx ->
-        task {
-            do! ctx.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme)
-            return! (setStatusCode 204) next ctx
-        }
+        do! db.SaveChangesAsync() |> fromTask |> AsyncResult.map ignore
+        do! signInUser ctx newUser
+
+        return toSharedUser newUser
+    }
+
+let private login (ctx: HttpContext) (db: Entity.AppDbContext) (req: LoginRequest) =
+    asyncResult {
+        if String.IsNullOrWhiteSpace(req.Email) || String.IsNullOrWhiteSpace(req.Password) then
+            return! Error InvalidCredentials
+
+        let! user = findUserByEmail db req.Email |> fromTask
+
+        match Option.ofObj user with
+        | None -> return! Error InvalidCredentials
+        | Some user ->
+            if not (BCrypt.Verify(req.Password, user.PasswordHash)) then
+                return! Error InvalidCredentials
+
+            do! signInUser ctx user
+            return toSharedUser user
+    }
+
+let private logout (ctx: HttpContext) () =
+    asyncResult {
+        do! ctx.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme) |> fromTaskUnit
+        return ()
+    }
+
+let authApiImplementation (ctx: HttpContext) : IAuthApi =
+    let db = ctx.GetService<Entity.AppDbContext>()
+
+    {
+        Register = register ctx db
+        Login = login ctx db
+        Logout = logout ctx
+    }
+
+let authApiHandler: HttpHandler =
+    RemotingUtil.handlerFromApi authApiImplementation

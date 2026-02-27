@@ -2,11 +2,8 @@ module TodosPage
 
 open Elmish
 open Feliz
-open Json
 open Shared
-open Fable.Core
-open Fable.Core.JsInterop
-open Fable.SimpleHttp
+open ClientShared
 open System
 open Browser.Dom
 
@@ -16,10 +13,6 @@ type Filter =
   | All
   | Active
   | Completed
-
-type Todo = {Id: int; Text: string; Completed: bool}
-
-type NewTodo = {Text: string}
 
 // =============== State ===============
 
@@ -33,6 +26,8 @@ type Model = {
   NewTodoText: string
   Filter: Filter
   Theme: Theme
+  DraggedTodoId: int option
+  DragTargetTodoId: int option
 }
 
 // Msg
@@ -47,12 +42,17 @@ type Msg =
   | ToggleTheme
   | RequestLogout
   | LoadTodos
+  | DragStarted of int
+  | DragEntered of int
+  | DragEnded
+  | DroppedOnTodo of int
   // API results
-  | GotTodos of Result<Todo list, exn>
-  | TodoAdded of Result<Todo, exn>
-  | TodoToggled of Result<Todo, exn>
-  | TodoDeleted of Result<int, exn>
-  | CompletedCleared of Result<unit, exn>
+  | GotTodos of Result<Todo list, AppError>
+  | TodoAdded of Result<Todo, AppError>
+  | TodoToggled of Result<Todo, AppError>
+  | TodoDeleted of Result<int, AppError>
+  | CompletedCleared of Result<unit, AppError>
+  | TodoMoved of Result<unit, AppError>
 
 let init (theme: Theme) : Model * Cmd<Msg> =
   {
@@ -60,157 +60,79 @@ let init (theme: Theme) : Model * Cmd<Msg> =
     NewTodoText = ""
     Filter = All
     Theme = theme
+    DraggedTodoId = None
+    DragTargetTodoId = None
   },
   Cmd.none // Todos will be loaded by the main program
-
-// =============== JSON (defensive) ===============
-
-let parseTodoObj (o: obj) : Todo =
-  let id = getFirst<int> o ["id"; "Id"] |> Option.defaultValue 0
-  let text =
-    getFirst<string> o ["text"; "Text"]
-    |> Option.defaultValue ""
-  let completed =
-    match getFirst<bool> o ["completed"; "Completed"] with
-    | Some b -> b
-    | None ->
-      match getFirst<float> o ["completed"; "Completed"] with
-      | Some n -> n <> 0.0
-      | None -> false
-  {Id = id; Text = text; Completed = completed}
-
-let parseTodosJson (json: string) : Result<Todo list, exn> =
-  try
-    let parsed = JS.JSON.parse (json)
-    if JS.Constructors.Array.isArray (parsed) then
-      let items: obj array = unbox parsed
-      items |> Array.map parseTodoObj |> Array.toList |> Ok
-    else
-      let inner = (parsed?todos: obj)
-      if
-        not (isNull inner)
-        && not (isUndef inner)
-        && JS.Constructors.Array.isArray (inner)
-      then
-        let items: obj array = unbox inner
-        items |> Array.map parseTodoObj |> Array.toList |> Ok
-      else
-        Error (exn "Unexpected todos JSON shape")
-  with ex ->
-    Error ex
-
-let parseTodoJson (json: string) : Result<Todo, exn> =
-  try
-    Ok (JS.JSON.parse (json) |> parseTodoObj)
-  with ex ->
-    Error ex
-
-let encodeNewTodo (t: NewTodo) =
-  JS.JSON.stringify (createObj ["text" ==> t.Text])
 
 // =============== API ===============
 
 module Api =
-  let private is2xx (status: int) = status >= 200 && status < 300
-  let private bodyOrEmpty (s: string) = if isNull s then "" else s
+  let private asUnexpected wrap (ex: exn) =
+    wrap (Error (Unexpected ex.Message))
 
   let getTodos () : Cmd<Msg> =
-    let fetch () =
-      async {
-        let! res = Http.request "/api/todos" |> Http.method GET |> Http.send
-        let status = res.statusCode
-        let body = bodyOrEmpty res.responseText
-        if status = 401 then
-          return Error (exn "Unauthorized")
-        elif not (is2xx status) then
-          return Error (exn (sprintf "HTTP %d: %s" status body))
-        else
-          return parseTodosJson body
-      }
-    Cmd.OfAsync.either fetch () GotTodos (fun ex -> GotTodos (Error ex))
+    Cmd.OfAsync.either
+      ApiClient.TodoApi.GetTodos
+      ()
+      GotTodos
+      (asUnexpected GotTodos)
 
   let addTodo (text: string) : Cmd<Msg> =
-    let fetch () =
-      async {
-        let payload = encodeNewTodo {Text = text}
-        let! res =
-          Http.request "/api/todos"
-          |> Http.method POST
-          |> Http.header (Headers.contentType "application/json")
-          |> Http.content (BodyContent.Text payload)
-          |> Http.send
-        let status = res.statusCode
-        let body = bodyOrEmpty res.responseText
-        if status = 401 then
-          return Error (exn "Unauthorized")
-        elif not (is2xx status) then
-          return Error (exn (sprintf "HTTP %d: %s" status body))
-        else
-          return parseTodoJson body
-      }
-    Cmd.OfAsync.either fetch () TodoAdded (fun ex -> TodoAdded (Error ex))
+    Cmd.OfAsync.either
+      ApiClient.TodoApi.CreateTodo
+      {Text = text}
+      TodoAdded
+      (asUnexpected TodoAdded)
 
   let toggleTodo (id: int) : Cmd<Msg> =
-    let fetch () =
-      async {
-        let! res =
-          Http.request (sprintf "/api/todos/%d/toggle" id)
-          |> Http.method PUT
-          |> Http.header (Headers.contentType "application/json")
-          |> Http.content (BodyContent.Text "{}")
-          |> Http.send
-        let status = res.statusCode
-        let body = bodyOrEmpty res.responseText
-        if status = 401 then
-          return Error (exn "Unauthorized")
-        elif not (is2xx status) then
-          return Error (exn (sprintf "HTTP %d: %s" status body))
-        else
-          return parseTodoJson body
-      }
-    Cmd.OfAsync.either fetch () TodoToggled (fun ex -> TodoToggled (Error ex))
+    Cmd.OfAsync.either
+      ApiClient.TodoApi.ToggleTodo
+      id
+      TodoToggled
+      (asUnexpected TodoToggled)
 
   let deleteTodo (id: int) : Cmd<Msg> =
     let fetch () =
       async {
-        let! res =
-          Http.request (sprintf "/api/todos/%d" id)
-          |> Http.method DELETE
-          |> Http.send
-        let status = res.statusCode
-        let body = bodyOrEmpty res.responseText
-        if status = 401 then
-          return Error (exn "Unauthorized")
-        elif status = 404 then
-          return Ok id
-        elif not (is2xx status) then
-          return Error (exn (sprintf "HTTP %d: %s" status body))
-        else
-          return Ok id
+        let! deleted = ApiClient.TodoApi.DeleteTodo id
+
+        match deleted with
+        | Ok () -> return Ok id
+        | Error err -> return Error err
       }
-    Cmd.OfAsync.either fetch () TodoDeleted (fun ex -> TodoDeleted (Error ex))
+    Cmd.OfAsync.either fetch () TodoDeleted (asUnexpected TodoDeleted)
 
   let clearCompleted () : Cmd<Msg> =
-    let fetch () =
-      async {
-        let! res =
-          Http.request "/api/todos/completed"
-          |> Http.method DELETE
-          |> Http.send
-        let status = res.statusCode
-        let body = bodyOrEmpty res.responseText
-        if status = 401 then
-          return Error (exn "Unauthorized")
-        elif not (is2xx status) then
-          return Error (exn (sprintf "HTTP %d: %s" status body))
-        else
-          return Ok ()
-      }
-    Cmd.OfAsync.either fetch () CompletedCleared (fun ex -> CompletedCleared (Error ex))
+    Cmd.OfAsync.either
+      ApiClient.TodoApi.ClearCompleted
+      ()
+      CompletedCleared
+      (asUnexpected CompletedCleared)
+
+  let moveTodo (todoId: int) (newPosition: int) : Cmd<Msg> =
+    Cmd.OfAsync.either
+      ApiClient.TodoApi.MoveTodo
+      {TodoId = todoId; NewPosition = newPosition}
+      TodoMoved
+      (asUnexpected TodoMoved)
 
 // =============== Update ===============
 
+let private moveTodoInList (todos: Todo list) (fromIndex: int) (toIndex: int) =
+  if fromIndex = toIndex then
+    todos
+  else
+    let items = ResizeArray(todos)
+    let moved = items[fromIndex]
+    items.RemoveAt(fromIndex)
+    items.Insert(toIndex, moved)
+    List.ofSeq items
+
 let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
+  let logApiError action err =
+    console.error ($"{action} failed", Auth.appErrorToMessage err)
+
   match msg with
   | NewTodoTextChanged text -> {model with NewTodoText = text}, Cmd.none
   | AddTodo ->
@@ -224,6 +146,59 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
   | SetFilter f -> {model with Filter = f}, Cmd.none
   | ClearCompleted -> model, Api.clearCompleted ()
   | RequestLogout -> model, Cmd.none // Parent will handle this
+  | DragStarted todoId ->
+    {
+      model with
+        DraggedTodoId = Some todoId
+        DragTargetTodoId = Some todoId
+    },
+    Cmd.none
+  | DragEntered todoId ->
+    match model.DraggedTodoId with
+    | Some draggedId when draggedId <> todoId ->
+      {model with DragTargetTodoId = Some todoId}, Cmd.none
+    | _ -> model, Cmd.none
+  | DragEnded ->
+    {
+      model with
+        DraggedTodoId = None
+        DragTargetTodoId = None
+    },
+    Cmd.none
+  | DroppedOnTodo targetTodoId ->
+    match model.Todos, model.DraggedTodoId with
+    | Loaded todos, Some draggedTodoId ->
+      let draggedIdx = todos |> List.tryFindIndex (fun t -> t.Id = draggedTodoId)
+      let targetIdx = todos |> List.tryFindIndex (fun t -> t.Id = targetTodoId)
+
+      match draggedIdx, targetIdx with
+      | Some fromIdx, Some rawToIdx when fromIdx <> rawToIdx ->
+        // Dropping on a row moves to that row's index in the full list.
+        // This avoids "no-op" moves when dragging to nearby rows.
+        let toIdx = rawToIdx
+
+        let reordered = moveTodoInList todos fromIdx toIdx
+        {
+          model with
+            Todos = Loaded reordered
+            DraggedTodoId = None
+            DragTargetTodoId = None
+        },
+        Api.moveTodo draggedTodoId toIdx
+      | _ ->
+        {
+          model with
+            DraggedTodoId = None
+            DragTargetTodoId = None
+        },
+        Cmd.none
+    | _ ->
+      {
+        model with
+          DraggedTodoId = None
+          DragTargetTodoId = None
+      },
+      Cmd.none
   | ToggleTheme ->
     {
       model with
@@ -236,7 +211,7 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
   | LoadTodos -> model, Api.getTodos ()
 
   | GotTodos (Ok todos) -> {model with Todos = Loaded todos}, Cmd.none
-  | GotTodos (Error e) -> {model with Todos = Errored e.Message}, Cmd.none
+  | GotTodos (Error err) -> {model with Todos = Errored (Auth.appErrorToMessage err)}, Cmd.none
 
   | TodoAdded (Ok todo) ->
     let next =
@@ -244,8 +219,8 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
       | Loaded xs -> Loaded (xs @ [todo])
       | _ -> Loaded [todo]
     {model with Todos = next}, Cmd.none
-  | TodoAdded (Error e) ->
-    console.error ("AddTodo failed", e)
+  | TodoAdded (Error err) ->
+    logApiError "AddTodo" err
     model, Cmd.none
 
   | TodoToggled (Ok updated) ->
@@ -258,8 +233,8 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
         )
       | other -> other
     {model with Todos = next}, Cmd.none
-  | TodoToggled (Error e) ->
-    console.error ("ToggleTodo failed", e)
+  | TodoToggled (Error err) ->
+    logApiError "ToggleTodo" err
     model, Cmd.none
 
   | TodoDeleted (Ok id) ->
@@ -268,14 +243,18 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
       | Loaded xs -> Loaded (xs |> List.filter (fun t -> t.Id <> id))
       | other -> other
     {model with Todos = next}, Cmd.none
-  | TodoDeleted (Error e) ->
-    console.error ("DeleteTodo failed", e)
+  | TodoDeleted (Error err) ->
+    logApiError "DeleteTodo" err
     model, Cmd.none
 
   | CompletedCleared (Ok ()) -> model, Api.getTodos ()
-  | CompletedCleared (Error e) ->
-    console.error ("ClearCompleted failed", e)
+  | CompletedCleared (Error err) ->
+    logApiError "ClearCompleted" err
     model, Cmd.none
+  | TodoMoved (Ok ()) -> model, Cmd.none
+  | TodoMoved (Error err) ->
+    logApiError "MoveTodo" err
+    model, Api.getTodos ()
 
 // =============== View ===============
 
@@ -336,9 +315,41 @@ let view (user: User option) (model: Model) (dispatch: Msg -> unit) =
                 ]
               else
                 for todo in filtered do
+                  let isDragged =
+                    model.DraggedTodoId
+                    |> Option.exists (fun draggedId -> draggedId = todo.Id)
+
+                  let isDropTarget =
+                    model.DragTargetTodoId
+                    |> Option.exists (fun targetId -> targetId = todo.Id)
+
                   Html.li [
                     prop.key todo.Id
-                    prop.className "group flex items-center gap-4 px-5 py-4"
+                    prop.className (
+                      String.concat " " [
+                        "group flex items-center gap-4 px-5 py-4 cursor-move"
+                        if isDropTarget && not isDragged then
+                          if isDark then
+                            "border-t-2 border-blue-400"
+                          else
+                            "border-t-2 border-blue-500"
+                        if isDragged then
+                          "opacity-60"
+                      ]
+                    )
+                    prop.draggable true
+                    prop.onDragStart (fun ev ->
+                      ev.dataTransfer.setData ("text/plain", string todo.Id) |> ignore
+                      ev.dataTransfer.effectAllowed <- "move"
+                      dispatch (DragStarted todo.Id)
+                    )
+                    prop.onDragEnter (fun _ -> dispatch (DragEntered todo.Id))
+                    prop.onDragOver (fun ev -> ev.preventDefault ())
+                    prop.onDrop (fun ev ->
+                      ev.preventDefault ()
+                      dispatch (DroppedOnTodo todo.Id)
+                    )
+                    prop.onDragEnd (fun _ -> dispatch DragEnded)
                     prop.children [
                       Html.button [
                         prop.className (

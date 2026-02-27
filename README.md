@@ -35,12 +35,13 @@ Users should be able to:
 - Clear all completed todos
 - Toggle light and dark mode
 
-- **Bonus**: Drag and drop to reorder items on the list (Note: This is not yet implemented)
+- **Bonus**: Drag and drop to reorder items on the list
 
 - **User Authentication**: Users can register for a new account and log in.
 - **Protected Routes**: The main todo list is only accessible to authenticated users.
 - **Multi-page Navigation**: The application uses routing to navigate between login, registration, and the main todo page.
 - **Database Migrations**: The database schema is managed using EF Core Migrations, allowing for version-controlled, incremental updates.
+- **Todo Ordering Strategy**: Reordering persists via an integer `position` per todo. Moving an item uses an `O(n)` shift (increment/decrement affected rows) for simplicity. Order-key strategies (for example LexoRank/fractional keys) were considered, but deferred to keep this app easier to reason about.
 
 ### Screenshot
 
@@ -185,13 +186,13 @@ For production-like environments, the recommended best practice is to decouple m
 
 This project currently uses **Approach 1** for simplicity in the development phase. The transition to **Approach 2** is a planned step for when `test` and `prod` environments are configured.
 
-**Runtime Note (dev/docker-compose):** To ensure EF Core can discover the migrations assembly inside the Docker container, the application proactively loads the `Backend.DbMigrations.dll` at startup if it exists. This is a pragmatic workaround for the development environment. For Kubernetes test/staging/prod environments, migrations should be run via a dedicated Job before the application deploys, which is the recommended best practice.
+**Runtime Note (dev/docker-compose):** The application configures EF Core to discover migrations from the main `Entity` assembly. For Kubernetes test/staging/prod environments, migrations should still be run via a dedicated Job before the application deploys, which is the recommended best practice.
 
 ### Continued development
 
 Future improvements could include:
 
-- Implementing the "drag and drop" functionality to reorder todos.
+- Enhancing drag-and-drop interactions (for example drop-zones/animations) and evaluating order-key ranking if list scale or concurrency grows.
 - Writing more comprehensive tests for both frontend and backend.
 - Implementing the Kubernetes Job pattern (Approach 2) for database migrations as `test` and `prod` environments are introduced.
 
@@ -260,14 +261,14 @@ dotnet tool install dotnet-ef
 
 #### Workflow for Schema Changes
 
-When you make changes to your entity models in `Backend/Entity` (e.g., adding a property to the `Todo` type in `Entities.fs`), follow these steps to create and apply a new migration:
+When you make changes to your entity models in `Backend/Entity` (e.g., adding a property to `Todo.cs`), follow these steps to create and apply a new migration:
 
 1.  **Create a New Migration:**
 
-    Run the following command from the root of the repository. This will generate a new C# file in `Backend/Entity/DbMigrations/Migrations` that represents the schema changes.
+    Run the following command from the root of the repository. This will generate a new C# migration file in `Backend/Entity/Migrations`.
 
     ```bash
-    dotnet ef migrations add YourMigrationName --project Backend/Entity/Migrations/Backend.Migrations.csproj --startup-project Backend/Server/backend.fsproj --output-dir .
+    dotnet ef migrations add YourMigrationName --project Backend/Entity/Entity.csproj --startup-project Backend/Server/backend.fsproj --output-dir Migrations
     ```
 
 2.  **Apply the Migration:**

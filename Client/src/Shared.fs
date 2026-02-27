@@ -1,9 +1,4 @@
-module Shared
-
-open System
-
-[<CLIMutable>]
-type User = {Id: int; Email: string}
+module ClientShared
 
 type Theme =
   | Light
