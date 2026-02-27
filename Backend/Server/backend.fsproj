@@ -6,7 +6,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="Data.fs" />
     <Compile Include="RemotingUtil.fs" />
     <Compile Include="Auth.fs" />
     <Compile Include="Todos.fs" />

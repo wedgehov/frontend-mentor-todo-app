@@ -10,4 +10,15 @@ public class AppDbContext : DbContext
 
     public virtual DbSet<User> Users { get; set; } = null!;
     public virtual DbSet<Todo> Todos { get; set; } = null!;
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<User>()
+            .HasIndex(u => u.Email)
+            .IsUnique();
+
+        modelBuilder.Entity<Todo>()
+            .HasIndex(t => new { t.UserId, t.Position })
+            .IsUnique();
+    }
 }

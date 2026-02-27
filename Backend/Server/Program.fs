@@ -4,7 +4,8 @@ open System
 open System.IO
 open System.Runtime.Loader
 open System.Threading.Tasks
-open Data
+open System.Linq
+open BCrypt.Net
 open Giraffe
 open Microsoft.AspNetCore.Authentication.Cookies
 open Microsoft.AspNetCore.Builder
@@ -18,6 +19,20 @@ open Microsoft.Extensions.Logging
 open Npgsql
 
 type AppDbContext = Entity.AppDbContext
+
+let seedDevelopmentData (db: AppDbContext) =
+    task {
+        let email = "test@example.com"
+        let! userExists = db.Users.AnyAsync(fun u -> u.Email = email)
+
+        if not userExists then
+            let devUser = Entity.User()
+            devUser.Email <- email
+            devUser.PasswordHash <- BCrypt.HashPassword("secret123")
+            db.Users.Add(devUser) |> ignore
+            let! _ = db.SaveChangesAsync()
+            ()
+    }
 
 let webApp: HttpHandler =
     choose [
