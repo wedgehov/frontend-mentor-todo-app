@@ -50,7 +50,8 @@ namespace Backend.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("UserId", "Position")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasDatabaseName("IX_todos_user_id_position_unique");
 
                     b.ToTable("todos");
                 });

@@ -17,7 +17,7 @@ namespace Entity.Migrations
                 unique: true);
 
             migrationBuilder.CreateIndex(
-                name: "IX_todos_user_id_position",
+                name: "IX_todos_user_id_position_unique",
                 table: "todos",
                 columns: new[] { "user_id", "position" },
                 unique: true);
@@ -31,7 +31,7 @@ namespace Entity.Migrations
                 table: "users");
 
             migrationBuilder.DropIndex(
-                name: "IX_todos_user_id_position",
+                name: "IX_todos_user_id_position_unique",
                 table: "todos");
         }
     }

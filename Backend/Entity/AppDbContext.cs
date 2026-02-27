@@ -19,6 +19,7 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<Todo>()
             .HasIndex(t => new { t.UserId, t.Position })
-            .IsUnique();
+            .IsUnique()
+            .HasDatabaseName("IX_todos_user_id_position_unique");
     }
 }

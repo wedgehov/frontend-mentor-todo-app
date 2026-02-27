@@ -8,7 +8,7 @@ services:
       - POSTGRES_USER=todo
       - POSTGRES_PASSWORD=secret
     ports:
-      - "5433:5432" # Map container's 5432 to host's 5433
+      - "5434:5432" # Map container's 5432 to host's 5434 (5433 often used by kubectl port-forward)
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U todo -d todo_app"]
       interval: 5s

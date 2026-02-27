@@ -11,7 +11,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Entity.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260227224513_AddUniqueConstraints")]
+    [Migration("20260227233110_AddUniqueConstraints")]
     partial class AddUniqueConstraints
     {
         /// <inheritdoc />
@@ -53,7 +53,8 @@ namespace Entity.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("UserId", "Position")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasDatabaseName("IX_todos_user_id_position_unique");
 
                     b.ToTable("todos");
                 });
