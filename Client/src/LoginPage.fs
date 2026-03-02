@@ -82,7 +82,7 @@ let view (model: Model) (dispatch: Msg -> unit) =
                 prop.className "p-8"
                 prop.onSubmit (fun ev ->
                   ev.preventDefault ()
-                  dispatch AttemptLogin
+                  AttemptLogin |> dispatch
                 )
                 prop.children [
                   Html.div [
@@ -121,13 +121,11 @@ let view (model: Model) (dispatch: Msg -> unit) =
                         prop.value model.Password
                         prop.onChange (SetPassword >> dispatch)
                       ]
-                      match model.Error with
-                      | Some error ->
+                      if model.Error.IsSome then
                         Html.p [
                           prop.className "text-red-500 text-xs italic mt-2"
-                          prop.text error
+                          prop.text model.Error.Value
                         ]
-                      | None -> Html.none
                     ]
                   ]
                   Html.div [

@@ -89,7 +89,7 @@ let view (model: Model) (dispatch: Msg -> unit) =
                 prop.className "p-8"
                 prop.onSubmit (fun ev ->
                   ev.preventDefault ()
-                  dispatch AttemptRegister
+                  AttemptRegister |> dispatch
                 )
                 prop.children [
                   Html.div [
@@ -147,13 +147,11 @@ let view (model: Model) (dispatch: Msg -> unit) =
                         prop.value model.ConfirmPassword
                         prop.onChange (SetConfirmPassword >> dispatch)
                       ]
-                      match model.Error with
-                      | Some error ->
+                      if model.Error.IsSome then
                         Html.p [
                           prop.className "text-red-500 text-xs italic mt-2"
-                          prop.text error
+                          prop.text model.Error.Value
                         ]
-                      | None -> Html.none
                     ]
                   ]
                   Html.div [
@@ -164,12 +162,7 @@ let view (model: Model) (dispatch: Msg -> unit) =
                           "w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-4 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
                         prop.type' "submit"
                         prop.disabled model.IsLoading
-                        prop.text (
-                          if model.IsLoading then
-                            "Creating Account..."
-                          else
-                            "Create New Account"
-                        )
+                        prop.text (if model.IsLoading then "Creating Account..." else "Create New Account")
                       ]
                       Html.div [
                         prop.className "text-center"

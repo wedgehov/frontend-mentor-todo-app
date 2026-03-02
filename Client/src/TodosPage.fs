@@ -263,15 +263,8 @@ let view (user: User option) (model: Model) (dispatch: Msg -> unit) =
 
   let filterButton (label: string, filter: Filter) =
     Html.button [
-      prop.className (
-        if model.Filter = filter then
-          "font-bold text-blue-500"
-        else if isDark then
-          "font-bold text-navy-850 hover:text-purple-100"
-        else
-          "font-bold text-gray-600 hover:text-navy-850"
-      )
-      prop.onClick (fun _ -> dispatch (SetFilter filter))
+      prop.className ("font-bold " + if model.Filter = filter then "text-blue-500" else if isDark then "text-navy-850 hover:text-purple-100" else "text-gray-600 hover:text-navy-850")
+      prop.onClick (fun _ -> SetFilter filter |> dispatch)
       prop.text label
     ]
 
@@ -299,12 +292,7 @@ let view (user: User option) (model: Model) (dispatch: Msg -> unit) =
         |> List.length
 
       Html.div [
-        prop.className (
-          if isDark then
-            "rounded-md shadow-xl transition-colors duration-300 divide-y bg-navy-900 divide-purple-800"
-          else
-            "rounded-md shadow-xl transition-colors duration-300 divide-y bg-white divide-gray-300"
-        )
+        prop.className ("rounded-md shadow-xl transition-colors duration-300 divide-y " + if isDark then "bg-navy-900 divide-purple-800" else "bg-white divide-gray-300")
         prop.children [
           Html.ul [
             prop.children [
@@ -329,10 +317,7 @@ let view (user: User option) (model: Model) (dispatch: Msg -> unit) =
                       String.concat " " [
                         "group flex items-center gap-4 px-5 py-4 cursor-move"
                         if isDropTarget && not isDragged then
-                          if isDark then
-                            "border-t-2 border-blue-400"
-                          else
-                            "border-t-2 border-blue-500"
+                          "border-t-2 " + if isDark then "border-blue-400" else "border-blue-500"
                         if isDragged then
                           "opacity-60"
                       ]
@@ -341,53 +326,34 @@ let view (user: User option) (model: Model) (dispatch: Msg -> unit) =
                     prop.onDragStart (fun ev ->
                       ev.dataTransfer.setData ("text/plain", string todo.Id) |> ignore
                       ev.dataTransfer.effectAllowed <- "move"
-                      dispatch (DragStarted todo.Id)
+                      DragStarted todo.Id |> dispatch
                     )
-                    prop.onDragEnter (fun _ -> dispatch (DragEntered todo.Id))
+                    prop.onDragEnter (fun _ -> DragEntered todo.Id |> dispatch)
                     prop.onDragOver (fun ev -> ev.preventDefault ())
                     prop.onDrop (fun ev ->
                       ev.preventDefault ()
-                      dispatch (DroppedOnTodo todo.Id)
+                      DroppedOnTodo todo.Id |> dispatch
                     )
-                    prop.onDragEnd (fun _ -> dispatch DragEnded)
+                    prop.onDragEnd (fun _ -> DragEnded |> dispatch)
                     prop.children [
                       Html.button [
-                        prop.className (
-                          if todo.Completed then
-                            "w-6 h-6 rounded-full flex items-center justify-center bg-gradient-to-br from-gradient-1-left to-gradient-1-right"
-                          else if isDark then
-                            "w-6 h-6 rounded-full flex items-center justify-center border border-purple-800"
-                          else
-                            "w-6 h-6 rounded-full flex items-center justify-center border border-gray-300"
-                        )
-                        prop.onClick (fun _ -> dispatch (ToggleTodo todo.Id))
+                        prop.className ("w-6 h-6 rounded-full flex items-center justify-center " + if todo.Completed then "bg-gradient-to-br from-gradient-1-left to-gradient-1-right" else if isDark then "border border-purple-800" else "border border-gray-300")
+                        prop.onClick (fun _ -> ToggleTodo todo.Id |> dispatch)
                         prop.children [
                           if todo.Completed then
                             Html.img [
                               prop.src "/images/icon-check.svg"
                               prop.alt "Checked"
                             ]
-                          else
-                            Html.none
                         ]
                       ]
                       Html.p [
-                        prop.className (
-                          if todo.Completed then
-                            if isDark then
-                              "grow line-through text-purple-700"
-                            else
-                              "grow line-through text-gray-300"
-                          else if isDark then
-                            "grow text-purple-300"
-                          else
-                            "grow text-navy-850"
-                        )
+                        prop.className ("grow " + if todo.Completed then (if isDark then "line-through text-purple-700" else "line-through text-gray-300") else if isDark then "text-purple-300" else "text-navy-850")
                         prop.text todo.Text
                       ]
                       Html.button [
                         prop.className "opacity-0 group-hover:opacity-100 transition-opacity"
-                        prop.onClick (fun _ -> dispatch (DeleteTodo todo.Id))
+                        prop.onClick (fun _ -> DeleteTodo todo.Id |> dispatch)
                         prop.children [
                           Html.img [
                             prop.src "/images/icon-cross.svg"
@@ -400,12 +366,7 @@ let view (user: User option) (model: Model) (dispatch: Msg -> unit) =
             ]
           ]
           Html.div [
-            prop.className (
-              if isDark then
-                "flex justify-between items-center text-sm p-4 text-purple-700"
-              else
-                "flex justify-between items-center text-sm p-4 text-gray-600"
-            )
+            prop.className ("flex justify-between items-center text-sm p-4 " + if isDark then "text-purple-700" else "text-gray-600")
             prop.children [
               Html.p [prop.text $"{itemsLeft} items left"]
               Html.div [
@@ -417,13 +378,8 @@ let view (user: User option) (model: Model) (dispatch: Msg -> unit) =
                 ]
               ]
               Html.button [
-                prop.className (
-                  if isDark then
-                    "hover:text-purple-100"
-                  else
-                    "hover:text-navy-850"
-                )
-                prop.onClick (fun _ -> dispatch ClearCompleted)
+                prop.className (if isDark then "hover:text-purple-100" else "hover:text-navy-850")
+                prop.onClick (fun _ -> ClearCompleted |> dispatch)
                 prop.text "Clear Completed"
               ]
             ]
@@ -432,24 +388,14 @@ let view (user: User option) (model: Model) (dispatch: Msg -> unit) =
       ]
 
   Html.div [
-    prop.className (
-      if isDark then
-        "min-h-screen transition-colors duration-300 bg-navy-950"
-      else
-        "min-h-screen transition-colors duration-300 bg-gray-50"
-    )
+    prop.className ("min-h-screen transition-colors duration-300 " + if isDark then "bg-navy-950" else "bg-gray-50")
     prop.style [
       style.fontFamily "var(--font-josefin-sans)"
       style.fontSize 18
     ]
     prop.children [
       Html.div [
-        prop.className (
-          if isDark then
-            "h-[200px] md:h-[300px] bg-no-repeat bg-cover bg-[url('/images/bg-mobile-dark.jpg')] md:bg-[url('/images/bg-desktop-dark.jpg')]"
-          else
-            "h-[200px] md:h-[300px] bg-no-repeat bg-cover bg-[url('/images/bg-mobile-light.jpg')] md:bg-[url('/images/bg-desktop-light.jpg')]"
-        )
+        prop.className ("h-[200px] md:h-[300px] bg-no-repeat bg-cover " + if isDark then "bg-[url('/images/bg-mobile-dark.jpg')] md:bg-[url('/images/bg-desktop-dark.jpg')]" else "bg-[url('/images/bg-mobile-light.jpg')] md:bg-[url('/images/bg-desktop-light.jpg')]")
       ]
       Html.main [
         prop.className "relative px-6 md:px-0 md:max-w-xl mx-auto -mt-36 md:-mt-48"
@@ -466,19 +412,14 @@ let view (user: User option) (model: Model) (dispatch: Msg -> unit) =
                 prop.children [
                   Html.button [
                     prop.className "text-white hover:text-gray-300 text-sm font-medium"
-                    prop.onClick (fun _ -> dispatch RequestLogout)
+                    prop.onClick (fun _ -> RequestLogout |> dispatch)
                     prop.text "Logout"
                   ]
                   Html.button [
-                    prop.onClick (fun _ -> dispatch ToggleTheme)
+                    prop.onClick (fun _ -> ToggleTheme |> dispatch)
                     prop.children [
                       Html.img [
-                        prop.src (
-                          if isDark then
-                            "/images/icon-sun.svg"
-                          else
-                            "/images/icon-moon.svg"
-                        )
+                        prop.src (if isDark then "/images/icon-sun.svg" else "/images/icon-moon.svg")
                         prop.alt "Toggle theme"
                       ]
                     ]
@@ -491,36 +432,21 @@ let view (user: User option) (model: Model) (dispatch: Msg -> unit) =
             prop.className "mb-6"
             prop.children [
               Html.form [
-                prop.className (
-                  if isDark then
-                    "flex items-center gap-4 px-5 py-3.5 rounded-md transition-colors duration-300 bg-navy-900"
-                  else
-                    "flex items-center gap-4 px-5 py-3.5 rounded-md transition-colors duration-300 bg-white"
-                )
+                prop.className ("flex items-center gap-4 px-5 py-3.5 rounded-md transition-colors duration-300 " + if isDark then "bg-navy-900" else "bg-white")
                 prop.onSubmit (fun ev ->
                   ev.preventDefault ()
-                  dispatch AddTodo
+                  AddTodo |> dispatch
                 )
                 prop.children [
                   Html.button [
                     prop.type' "submit"
-                    prop.className (
-                      if isDark then
-                        "w-6 h-6 border rounded-full flex-shrink-0 border-purple-800"
-                      else
-                        "w-6 h-6 border rounded-full flex-shrink-0 border-gray-300"
-                    )
+                    prop.className ("w-6 h-6 border rounded-full flex-shrink-0 " + if isDark then "border-purple-800" else "border-gray-300")
                   ]
                   Html.input [
-                    prop.className (
-                      if isDark then
-                        "w-full bg-transparent outline-none text-purple-300 placeholder:text-purple-700"
-                      else
-                        "w-full bg-transparent outline-none text-navy-850 placeholder:text-gray-600"
-                    )
+                    prop.className ("w-full bg-transparent outline-none " + if isDark then "text-purple-300 placeholder:text-purple-700" else "text-navy-850 placeholder:text-gray-600")
                     prop.value model.NewTodoText
                     prop.placeholder "Create a new todo..."
-                    prop.onChange (fun v -> dispatch (NewTodoTextChanged v))
+                    prop.onChange (NewTodoTextChanged >> dispatch)
                   ]
                 ]
               ]
@@ -528,37 +454,20 @@ let view (user: User option) (model: Model) (dispatch: Msg -> unit) =
           ]
           listAndFooter
           Html.div [
-            prop.className (
-              if isDark then
-                "md:hidden mt-4 p-4 rounded-md flex justify-center gap-4 shadow-xl transition-colors duration-300 bg-navy-900"
-              else
-                "md:hidden mt-4 p-4 rounded-md flex justify-center gap-4 shadow-xl transition-colors duration-300 bg-white"
-            )
+            prop.className ("md:hidden mt-4 p-4 rounded-md flex justify-center gap-4 shadow-xl transition-colors duration-300 " + if isDark then "bg-navy-900" else "bg-white")
             prop.children [
               filterButton ("All", All)
               filterButton ("Active", Active)
               filterButton ("Completed", Completed)
             ]
           ]
-          (match user with
-           | Some u ->
-             Html.p [
-               prop.className (
-                 if isDark then
-                   "text-center text-sm mt-4 text-purple-700"
-                 else
-                   "text-center text-sm mt-4 text-gray-600"
-               )
-               prop.text $"Logged in as {u.Email}"
-             ]
-           | None -> Html.none)
+          if user.IsSome then
+            Html.p [
+              prop.className ("text-center text-sm mt-4 " + if isDark then "text-purple-700" else "text-gray-600")
+              prop.text $"Logged in as {user.Value.Email}"
+            ]
           Html.p [
-            prop.className (
-              if isDark then
-                "text-center text-sm mt-10 text-purple-700"
-              else
-                "text-center text-sm mt-10 text-gray-600"
-            )
+            prop.className ("text-center text-sm mt-10 " + if isDark then "text-purple-700" else "text-gray-600")
             prop.text "Drag and drop to reorder list"
           ]
         ]
