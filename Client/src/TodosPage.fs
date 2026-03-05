@@ -65,9 +65,6 @@ let init () : Model * Cmd<Msg> =
 // =============== API ===============
 
 module Api =
-  let private asUnexpected wrap (ex: exn) =
-    wrap (Error (Unexpected ex.Message))
-
   let getTodos () : Cmd<Msg> =
     Cmd.OfAsync.either
       ApiClient.TodoApi.GetTodos
@@ -243,14 +240,13 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
 // =============== View ===============
 
 let view
-  (theme: Theme)
+  theme
   (user: User option)
   (model: Model)
   (dispatch: Msg -> unit)
   (onToggleTheme: unit -> unit)
   =
-  let isDark = theme = Dark
-
+  let isDark = string theme = "Dark"
   let filterButton (label: string, filter: Filter) =
     Html.button [
       prop.className ("cursor-pointer font-bold " + if model.Filter = filter then "text-blue-500" else if isDark then "text-navy-850 hover:text-purple-100" else "text-gray-600 hover:text-navy-850")

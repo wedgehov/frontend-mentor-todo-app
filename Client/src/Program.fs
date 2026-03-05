@@ -6,13 +6,16 @@ open Elmish.Navigation
 open Elmish.UrlParser
 open Feliz
 open Shared
-open ClientShared
 
 // Main model
 type Page =
   | TodosPage of int
   | LoginPage
   | RegisterPage
+
+type Theme =
+  | Light
+  | Dark
 
 type Model = {
   Page: Page

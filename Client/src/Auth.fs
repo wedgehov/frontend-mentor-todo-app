@@ -2,6 +2,7 @@ module Auth
 
 open Elmish
 open Shared
+open ClientShared
 
 let appErrorToMessage (error: AppError) =
   match error with
@@ -12,26 +13,23 @@ let appErrorToMessage (error: AppError) =
   | ValidationError msg -> msg
   | Unexpected msg -> msg
 
-let private toUnexpected onResult (ex: exn) =
-  onResult (Error (Unexpected ex.Message))
-
 let login (req: LoginRequest) (onResult: Result<User, AppError> -> 'msg) : Cmd<'msg> =
   Cmd.OfAsync.either
     ApiClient.AuthApi.Login
     req
     onResult
-    (toUnexpected onResult)
+    (asUnexpected onResult)
 
 let register (req: RegisterRequest) (onResult: Result<User, AppError> -> 'msg) : Cmd<'msg> =
   Cmd.OfAsync.either
     ApiClient.AuthApi.Register
     req
     onResult
-    (toUnexpected onResult)
+    (asUnexpected onResult)
 
 let logout (onResult: Result<unit, AppError> -> 'msg) : Cmd<'msg> =
   Cmd.OfAsync.either
     ApiClient.AuthApi.Logout
     ()
     onResult
-    (toUnexpected onResult)
+    (asUnexpected onResult)

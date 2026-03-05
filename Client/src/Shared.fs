@@ -1,5 +1,9 @@
 module ClientShared
 
-type Theme =
-  | Light
-  | Dark
+open Shared
+
+let asUnexpected wrap (ex: exn) =
+  ex.Message
+  |> Unexpected
+  |> Error
+  |> wrap

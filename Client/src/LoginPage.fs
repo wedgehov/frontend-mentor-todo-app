@@ -3,7 +3,6 @@ module LoginPage
 open Elmish
 open Feliz
 open Shared
-open ClientShared
 
 // Model
 type Model = {
@@ -49,12 +48,12 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
 
 // View
 let view
-  (theme: Theme)
+  theme
   (model: Model)
   (dispatch: Msg -> unit)
   (onToggleTheme: unit -> unit)
   =
-  let isDark = theme = Dark
+  let isDark = string theme = "Dark"
   Html.div [
     prop.className ("min-h-screen transition-colors duration-300 " + if isDark then "bg-navy-950" else "bg-gray-50")
     prop.style [
