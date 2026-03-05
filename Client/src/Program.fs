@@ -3,12 +3,14 @@ module App
 open Elmish
 open Elmish.React
 open Elmish.Navigation
+open Elmish.UrlParser
+open Feliz
 open Shared
 open ClientShared
 
 // Main model
 type Page =
-  | TodosPage
+  | TodosPage of int
   | LoginPage
   | RegisterPage
 
@@ -16,6 +18,8 @@ type Model = {
   Page: Page
   User: User option
   Theme: Theme
+  LogoutError: string option
+  IsLoggingOut: bool
   Todos: TodosPage.Model
   Login: LoginPage.Model
   Register: RegisterPage.Model
@@ -26,67 +30,70 @@ type Msg =
   | TodosMsg of TodosPage.Msg
   | LoginMsg of LoginPage.Msg
   | RegisterMsg of RegisterPage.Msg
-  | LoggedOut
+  | LogoutResult of Result<unit, AppError>
   | RequestLogout
-  | LoadTodos
+  | ToggleTheme
 
-// URL parsing and routing
-module UP = Elmish.UrlParser
+module Route =
+  let toHashPath (page: Page) =
+    match page with
+    | LoginPage -> "#/login"
+    | RegisterPage -> "#/register"
+    | TodosPage userId -> $"#/user/{userId}/todos"
 
 let pageParser =
-  UP.oneOf [
-    UP.map TodosPage (UP.s "todos")
-    UP.map LoginPage (UP.s "login")
-    UP.map RegisterPage (UP.s "register")
-    UP.map TodosPage UP.top
+  oneOf [
+    map LoginPage top
+    map TodosPage (s "user" </> i32 </> s "todos")
+    map LoginPage (s "login")
+    map RegisterPage (s "register")
   ]
 
-let urlParser: Browser.Types.Location -> Page option = UP.parseHash pageParser
+let urlParser: Browser.Types.Location -> Page option = parseHash pageParser
+
+let private guardPageForUser (requestedPage: Page) (user: User option) =
+  match requestedPage, user with
+  | TodosPage _, None -> LoginPage
+  | TodosPage requestedUserId, Some currentUser when requestedUserId <> currentUser.Id -> TodosPage currentUser.Id
+  | TodosPage _, Some currentUser -> TodosPage currentUser.Id
+  | (LoginPage | RegisterPage), Some currentUser -> TodosPage currentUser.Id
+  | requestedPage, None -> requestedPage
 
 let urlUpdate (result: Page option) (model: Model) : Model * Cmd<Msg> =
-  match result with
-  | Some requestedPage ->
-    let needsAuth =
-      match requestedPage with
-      | TodosPage -> true
-      | _ -> false
-    let isAuthenticated = model.User.IsSome
+  let requestedPage = result |> Option.defaultValue LoginPage
+  let actualPage = guardPageForUser requestedPage model.User
 
-    // If user needs auth for the requested page but isn't authenticated,
-    // force the page to be LoginPage. Otherwise, use the requested page.
-    let actualPage =
-      if needsAuth && not isAuthenticated then
-        LoginPage
-      else
-        requestedPage
+  // When navigating to a page, reset its specific state to clear old form data.
+  let newModel =
+    match actualPage with
+    | LoginPage -> {model with Page = LoginPage; Login = LoginPage.init ()}
+    | RegisterPage -> {model with Page = RegisterPage; Register = RegisterPage.init ()}
+    | _ -> {model with Page = actualPage}
 
-    // When navigating to a page, reset its specific state to clear old form data.
-    let newModel =
-      match actualPage with
-      | LoginPage -> {model with Login = LoginPage.init ()}
-      | RegisterPage -> {model with Register = RegisterPage.init ()}
-      | TodosPage -> model // No state to reset on the todos page for now
+  let shouldRedirect = result.IsNone || requestedPage <> actualPage
+  let redirectCmd =
+    if shouldRedirect then
+      Navigation.newUrl (Route.toHashPath actualPage)
+    else
+      Cmd.none
 
-    {newModel with Page = actualPage}, Cmd.none
+  let loadTodosCmd =
+    match actualPage, model.User with
+    | TodosPage _, Some _ -> Cmd.ofMsg (TodosMsg TodosPage.LoadTodos)
+    | _ -> Cmd.none
 
-  | None -> model, Cmd.none // No page found, do nothing
-
-let private loginSucceeded (model: Model) : Model * Cmd<Msg> =
-  let (newModel, newCmd) = urlUpdate (Some TodosPage) model
-  newModel,
-  Cmd.batch [
-    newCmd
-    Cmd.ofMsg LoadTodos
-  ]
+  newModel, Cmd.batch [redirectCmd; loadTodosCmd]
 
 // Init
 let init (result: Option<Page>) : Model * Cmd<Msg> =
-  let page = result |> Option.defaultValue TodosPage
-  let (todosModel, todosCmd) = TodosPage.init Dark
+  let page = result |> Option.defaultValue LoginPage
+  let (todosModel, todosCmd) = TodosPage.init ()
   let model = {
     Page = page
     User = None
     Theme = Dark
+    LogoutError = None
+    IsLoggingOut = false
     Todos = todosModel
     Login = LoginPage.init ()
     Register = RegisterPage.init ()
@@ -102,6 +109,15 @@ let init (result: Option<Page>) : Model * Cmd<Msg> =
 // Update
 let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
   match msg with
+  | ToggleTheme ->
+    {
+      model with
+        Theme =
+          (match model.Theme with
+           | Light -> Dark
+           | Dark -> Light)
+    },
+    Cmd.none
   | TodosMsg todosMsg ->
     let (newTodosModel, newTodosCmd) = TodosPage.update todosMsg model.Todos
     // Check if this is a logout request from TodosPage
@@ -118,11 +134,16 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
     // Check if login was successful
     match loginMsg with
     | LoginPage.LoginResult (Ok user) ->
-      let (newModel, newCmd) = loginSucceeded {model with User = Some user; Login = newLoginModel}
-      newModel,
+      {
+        model with
+          User = Some user
+          Login = newLoginModel
+          LogoutError = None
+          IsLoggingOut = false
+      },
       Cmd.batch [
         Cmd.map LoginMsg newLoginCmd
-        newCmd
+        Navigation.newUrl (Route.toHashPath (TodosPage user.Id))
       ]
     | _ -> {model with Login = newLoginModel}, Cmd.map LoginMsg newLoginCmd
 
@@ -132,32 +153,68 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
     // Check if registration was successful
     match registerMsg with
     | RegisterPage.RegisterResult (Ok user) ->
-      let (newModel, newCmd) = loginSucceeded {model with User = Some user; Register = newRegisterModel}
-      newModel,
+      {
+        model with
+          User = Some user
+          Register = newRegisterModel
+          LogoutError = None
+          IsLoggingOut = false
+      },
       Cmd.batch [
         Cmd.map RegisterMsg newRegisterCmd
-        newCmd
+        Navigation.newUrl (Route.toHashPath (TodosPage user.Id))
       ]
     | _ -> {model with Register = newRegisterModel}, Cmd.map RegisterMsg newRegisterCmd
 
-  | LoggedOut ->
-    // When logged out, clear the user, re-init todos and navigate to the login page
-    let (newTodosModel, _) = TodosPage.init model.Theme
-    let (newModel, navCmd) =
-      urlUpdate (Some LoginPage) {model with User = None; Todos = newTodosModel}
-    newModel, navCmd
-  | RequestLogout -> model, Auth.logout (fun _ -> LoggedOut) // Call logout API
-  | LoadTodos ->
-    // Load todos by dispatching the LoadTodos command to TodosPage
-    let (newTodosModel, newTodosCmd) = TodosPage.update TodosPage.LoadTodos model.Todos
-    {model with Todos = newTodosModel}, Cmd.map TodosMsg newTodosCmd
+  | LogoutResult (Ok ()) ->
+    // On logout success, clear auth-related state and trigger URL navigation.
+    // The resulting URL change will run through urlUpdate and set the page.
+    let (newTodosModel, _) = TodosPage.init ()
+    {
+      model with
+        User = None
+        IsLoggingOut = false
+        LogoutError = None
+        Todos = newTodosModel
+        Login = LoginPage.init ()
+        Register = RegisterPage.init ()
+    },
+    Navigation.newUrl (Route.toHashPath LoginPage)
+  | LogoutResult (Error err) ->
+    {
+      model with
+        IsLoggingOut = false
+        LogoutError = Some (Auth.appErrorToMessage err)
+    },
+    Cmd.none
+  | RequestLogout ->
+    {model with IsLoggingOut = true; LogoutError = None},
+    Auth.logout LogoutResult // Call logout API
+
 
 // View
 let view (model: Model) (dispatch: Msg -> unit) =
-  match model.Page with
-  | TodosPage -> TodosPage.view model.User model.Todos (TodosMsg >> dispatch)
-  | LoginPage -> LoginPage.view model.Login (LoginMsg >> dispatch)
-  | RegisterPage -> RegisterPage.view model.Register (RegisterMsg >> dispatch)
+  let onToggleTheme () = ToggleTheme |> dispatch
+
+  Html.div [
+    prop.className "relative"
+    prop.children [
+      match model.Page with
+      | TodosPage _ -> TodosPage.view model.Theme model.User model.Todos (TodosMsg >> dispatch) onToggleTheme
+      | LoginPage -> LoginPage.view model.Theme model.Login (LoginMsg >> dispatch) onToggleTheme
+      | RegisterPage -> RegisterPage.view model.Theme model.Register (RegisterMsg >> dispatch) onToggleTheme
+      if model.LogoutError.IsSome then
+        Html.div [
+          prop.className "fixed left-1/2 top-6 z-50 -translate-x-1/2 rounded-md bg-red-500 px-4 py-2 text-sm font-medium text-white shadow-lg"
+          prop.text $"Logout failed: {model.LogoutError.Value}"
+        ]
+      if model.IsLoggingOut then
+        Html.div [
+          prop.className "fixed left-1/2 top-20 z-50 -translate-x-1/2 rounded-md bg-navy-850 px-4 py-2 text-sm font-medium text-white shadow-lg"
+          prop.text "Logging out..."
+        ]
+    ]
+  ]
 
 // Program
 let start () =

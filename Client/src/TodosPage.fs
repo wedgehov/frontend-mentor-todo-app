@@ -25,7 +25,6 @@ type Model = {
   Todos: TodosState
   NewTodoText: string
   Filter: Filter
-  Theme: Theme
   DraggedTodoId: int option
   DragTargetTodoId: int option
 }
@@ -39,7 +38,6 @@ type Msg =
   | DeleteTodo of int
   | SetFilter of Filter
   | ClearCompleted
-  | ToggleTheme
   | RequestLogout
   | LoadTodos
   | DragStarted of int
@@ -54,12 +52,11 @@ type Msg =
   | CompletedCleared of Result<unit, AppError>
   | TodoMoved of Result<unit, AppError>
 
-let init (theme: Theme) : Model * Cmd<Msg> =
+let init () : Model * Cmd<Msg> =
   {
     Todos = Loading
     NewTodoText = ""
     Filter = All
-    Theme = theme
     DraggedTodoId = None
     DragTargetTodoId = None
   },
@@ -93,15 +90,11 @@ module Api =
       (asUnexpected TodoToggled)
 
   let deleteTodo (id: int) : Cmd<Msg> =
-    let fetch () =
-      async {
-        let! deleted = ApiClient.TodoApi.DeleteTodo id
-
-        match deleted with
-        | Ok () -> return Ok id
-        | Error err -> return Error err
-      }
-    Cmd.OfAsync.either fetch () TodoDeleted (asUnexpected TodoDeleted)
+    Cmd.OfAsync.either
+      ApiClient.TodoApi.DeleteTodo
+      id
+      (fun result -> result |> Result.map (fun () -> id) |> TodoDeleted)
+      (asUnexpected TodoDeleted)
 
   let clearCompleted () : Cmd<Msg> =
     Cmd.OfAsync.either
@@ -199,15 +192,6 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
           DragTargetTodoId = None
       },
       Cmd.none
-  | ToggleTheme ->
-    {
-      model with
-          Theme =
-            (match model.Theme with
-             | Light -> Dark
-             | Dark -> Light)
-    },
-    Cmd.none
   | LoadTodos -> model, Api.getTodos ()
 
   | GotTodos (Ok todos) -> {model with Todos = Loaded todos}, Cmd.none
@@ -258,12 +242,18 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
 
 // =============== View ===============
 
-let view (user: User option) (model: Model) (dispatch: Msg -> unit) =
-  let isDark = model.Theme = Dark
+let view
+  (theme: Theme)
+  (user: User option)
+  (model: Model)
+  (dispatch: Msg -> unit)
+  (onToggleTheme: unit -> unit)
+  =
+  let isDark = theme = Dark
 
   let filterButton (label: string, filter: Filter) =
     Html.button [
-      prop.className ("font-bold " + if model.Filter = filter then "text-blue-500" else if isDark then "text-navy-850 hover:text-purple-100" else "text-gray-600 hover:text-navy-850")
+      prop.className ("cursor-pointer font-bold " + if model.Filter = filter then "text-blue-500" else if isDark then "text-navy-850 hover:text-purple-100" else "text-gray-600 hover:text-navy-850")
       prop.onClick (fun _ -> SetFilter filter |> dispatch)
       prop.text label
     ]
@@ -315,7 +305,7 @@ let view (user: User option) (model: Model) (dispatch: Msg -> unit) =
                     prop.key todo.Id
                     prop.className (
                       String.concat " " [
-                        "group flex items-center gap-4 px-5 py-4 cursor-move"
+                        "group flex items-center gap-4 px-5 py-4 cursor-pointer active:cursor-grabbing"
                         if isDropTarget && not isDragged then
                           "border-t-2 " + if isDark then "border-blue-400" else "border-blue-500"
                         if isDragged then
@@ -337,7 +327,7 @@ let view (user: User option) (model: Model) (dispatch: Msg -> unit) =
                     prop.onDragEnd (fun _ -> DragEnded |> dispatch)
                     prop.children [
                       Html.button [
-                        prop.className ("w-6 h-6 rounded-full flex items-center justify-center " + if todo.Completed then "bg-gradient-to-br from-gradient-1-left to-gradient-1-right" else if isDark then "border border-purple-800" else "border border-gray-300")
+                        prop.className ("cursor-pointer w-6 h-6 rounded-full flex items-center justify-center " + if todo.Completed then "bg-gradient-to-br from-gradient-1-left to-gradient-1-right" else if isDark then "border border-purple-800" else "border border-gray-300")
                         prop.onClick (fun _ -> ToggleTodo todo.Id |> dispatch)
                         prop.children [
                           if todo.Completed then
@@ -352,7 +342,7 @@ let view (user: User option) (model: Model) (dispatch: Msg -> unit) =
                         prop.text todo.Text
                       ]
                       Html.button [
-                        prop.className "opacity-0 group-hover:opacity-100 transition-opacity"
+                        prop.className "cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
                         prop.onClick (fun _ -> DeleteTodo todo.Id |> dispatch)
                         prop.children [
                           Html.img [
@@ -378,7 +368,7 @@ let view (user: User option) (model: Model) (dispatch: Msg -> unit) =
                 ]
               ]
               Html.button [
-                prop.className (if isDark then "hover:text-purple-100" else "hover:text-navy-850")
+                prop.className ("cursor-pointer " + if isDark then "hover:text-purple-100" else "hover:text-navy-850")
                 prop.onClick (fun _ -> ClearCompleted |> dispatch)
                 prop.text "Clear Completed"
               ]
@@ -411,12 +401,13 @@ let view (user: User option) (model: Model) (dispatch: Msg -> unit) =
                 prop.className "flex items-center gap-4"
                 prop.children [
                   Html.button [
-                    prop.className "text-white hover:text-gray-300 text-sm font-medium"
+                    prop.className "cursor-pointer text-white hover:text-gray-300 text-sm font-medium"
                     prop.onClick (fun _ -> RequestLogout |> dispatch)
                     prop.text "Logout"
                   ]
                   Html.button [
-                    prop.onClick (fun _ -> ToggleTheme |> dispatch)
+                    prop.className "cursor-pointer"
+                    prop.onClick (fun _ -> onToggleTheme ())
                     prop.children [
                       Html.img [
                         prop.src (if isDark then "/images/icon-sun.svg" else "/images/icon-moon.svg")
@@ -440,10 +431,14 @@ let view (user: User option) (model: Model) (dispatch: Msg -> unit) =
                 prop.children [
                   Html.button [
                     prop.type' "submit"
-                    prop.className ("w-6 h-6 border rounded-full flex-shrink-0 " + if isDark then "border-purple-800" else "border-gray-300")
+                    prop.className ("cursor-pointer appearance-none p-0 w-6 h-6 aspect-square rounded-full flex items-center justify-center flex-shrink-0 border " + if isDark then "border-purple-800" else "border-gray-300")
+                    prop.style [
+                      style.minWidth 24
+                      style.minHeight 24
+                    ]
                   ]
                   Html.input [
-                    prop.className ("w-full bg-transparent outline-none " + if isDark then "text-purple-300 placeholder:text-purple-700" else "text-navy-850 placeholder:text-gray-600")
+                    prop.className ("cursor-text w-full bg-transparent border-none outline-none focus:outline-none focus:ring-0 focus:border-none " + if isDark then "text-purple-300 placeholder:text-purple-700" else "text-navy-850 placeholder:text-gray-600")
                     prop.value model.NewTodoText
                     prop.placeholder "Create a new todo..."
                     prop.onChange (NewTodoTextChanged >> dispatch)
@@ -461,15 +456,15 @@ let view (user: User option) (model: Model) (dispatch: Msg -> unit) =
               filterButton ("Completed", Completed)
             ]
           ]
+          Html.p [
+            prop.className ("text-center text-sm mt-10 " + if isDark then "text-purple-700" else "text-gray-600")
+            prop.text "Drag and drop to reorder list"
+          ]
           if user.IsSome then
             Html.p [
               prop.className ("text-center text-sm mt-4 " + if isDark then "text-purple-700" else "text-gray-600")
               prop.text $"Logged in as {user.Value.Email}"
             ]
-          Html.p [
-            prop.className ("text-center text-sm mt-10 " + if isDark then "text-purple-700" else "text-gray-600")
-            prop.text "Drag and drop to reorder list"
-          ]
         ]
       ]
     ]

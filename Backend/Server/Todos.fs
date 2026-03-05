@@ -13,8 +13,9 @@ let private toSharedTodo (todo: Entity.Todo) : Todo = {
     Completed = todo.Completed
 }
 
-let private insertTodo (db: Entity.AppDbContext) (userId: int) (textValue: string) =
+let private insertTodo (ctx: Microsoft.AspNetCore.Http.HttpContext) (userId: int) (textValue: string) =
     task {
+        let db = ctx.GetService<Entity.AppDbContext>()
         let! lastTodo =
             db.Todos
                 .AsNoTracking()
@@ -38,8 +39,9 @@ let private insertTodo (db: Entity.AppDbContext) (userId: int) (textValue: strin
         return newTodo
     }
 
-let private deleteTodo (db: Entity.AppDbContext) (userId: int) (id: int) =
+let private deleteTodo (ctx: Microsoft.AspNetCore.Http.HttpContext) (userId: int) (id: int) =
     taskResult {
+        let db = ctx.GetService<Entity.AppDbContext>()
         let! found =
             db.Todos.FirstOrDefaultAsync(fun t -> t.Id = id && t.UserId = userId)
             |> TaskResult.ofTask
@@ -63,8 +65,9 @@ let private deleteTodo (db: Entity.AppDbContext) (userId: int) (id: int) =
         ()
     }
 
-let private toggleTodo (db: Entity.AppDbContext) (userId: int) (id: int) =
+let private toggleTodo (ctx: Microsoft.AspNetCore.Http.HttpContext) (userId: int) (id: int) =
     taskResult {
+        let db = ctx.GetService<Entity.AppDbContext>()
         let! found =
             db.Todos.FirstOrDefaultAsync(fun t -> t.Id = id && t.UserId = userId)
             |> TaskResult.ofTask
@@ -79,8 +82,9 @@ let private toggleTodo (db: Entity.AppDbContext) (userId: int) (id: int) =
         return found
     }
 
-let private clearCompleted (db: Entity.AppDbContext) (userId: int) =
+let private clearCompleted (ctx: Microsoft.AspNetCore.Http.HttpContext) (userId: int) =
     task {
+        let db = ctx.GetService<Entity.AppDbContext>()
         let! completed = db.Todos.Where(fun t -> t.UserId = userId && t.Completed).ToListAsync()
         db.Todos.RemoveRange(completed)
 
@@ -98,8 +102,9 @@ let private clearCompleted (db: Entity.AppDbContext) (userId: int) =
         ()
     }
 
-let private moveTodo (db: Entity.AppDbContext) (userId: int) (todoId: int) (newPosition: int) =
+let private moveTodo (ctx: Microsoft.AspNetCore.Http.HttpContext) (userId: int) (todoId: int) (newPosition: int) =
     taskResult {
+        let db = ctx.GetService<Entity.AppDbContext>()
         let! orderedTodos =
             db.Todos
                 .Where(fun t -> t.UserId = userId)
@@ -130,9 +135,9 @@ let private moveTodo (db: Entity.AppDbContext) (userId: int) (todoId: int) (newP
             ()
     }
 
-let private getTodos (ctx: Microsoft.AspNetCore.Http.HttpContext) (db: Entity.AppDbContext) () =
+let private getTodos (ctx: Microsoft.AspNetCore.Http.HttpContext) (userId: int) =
     asyncResult {
-        let! userId = ctx |> Auth.tryGetUserId |> AsyncResult.ofResult
+        let db = ctx.GetService<Entity.AppDbContext>()
         let! todos =
             db.Todos
                 .AsNoTracking()
@@ -146,62 +151,66 @@ let private getTodos (ctx: Microsoft.AspNetCore.Http.HttpContext) (db: Entity.Ap
         return todos |> Seq.map toSharedTodo |> List.ofSeq
     }
 
-let private createTodo (ctx: Microsoft.AspNetCore.Http.HttpContext) (db: Entity.AppDbContext) (payload: NewTodo) =
+let private createTodo (ctx: Microsoft.AspNetCore.Http.HttpContext) (userId: int) (payload: NewTodo) =
     asyncResult {
-        let! userId = ctx |> Auth.tryGetUserId |> AsyncResult.ofResult
-
         do!
             payload.Text
             |> System.String.IsNullOrWhiteSpace
             |> Result.requireFalse (ValidationError "Todo text is required.")
 
         let! created =
-            insertTodo db userId payload.Text
+            insertTodo ctx userId payload.Text
             |> Async.AwaitTask
             |> AsyncResult.ofAsync
 
         return toSharedTodo created
     }
 
-let private toggleTodoById (ctx: Microsoft.AspNetCore.Http.HttpContext) (db: Entity.AppDbContext) (id: int) =
+let private toggleTodoById (ctx: Microsoft.AspNetCore.Http.HttpContext) (userId: int) (id: int) =
     asyncResult {
-        let! userId = ctx |> Auth.tryGetUserId |> AsyncResult.ofResult
-        let! updated = toggleTodo db userId id |> Async.AwaitTask
+        let! updated = toggleTodo ctx userId id |> Async.AwaitTask
         return toSharedTodo updated
     }
 
-let private deleteTodoById (ctx: Microsoft.AspNetCore.Http.HttpContext) (db: Entity.AppDbContext) (id: int) =
+let private deleteTodoById (ctx: Microsoft.AspNetCore.Http.HttpContext) (userId: int) (id: int) =
     asyncResult {
-        let! userId = ctx |> Auth.tryGetUserId |> AsyncResult.ofResult
-        do! deleteTodo db userId id |> Async.AwaitTask
+        do! deleteTodo ctx userId id |> Async.AwaitTask
     }
 
-let private clearCompletedTodos (ctx: Microsoft.AspNetCore.Http.HttpContext) (db: Entity.AppDbContext) () =
+let private clearCompletedTodos (ctx: Microsoft.AspNetCore.Http.HttpContext) (userId: int) =
     asyncResult {
-        let! userId = ctx |> Auth.tryGetUserId |> AsyncResult.ofResult
-        do! clearCompleted db userId |> Async.AwaitTask |> AsyncResult.ofAsync
+        do! clearCompleted ctx userId |> Async.AwaitTask |> AsyncResult.ofAsync
     }
 
-let private moveTodoByPosition (ctx: Microsoft.AspNetCore.Http.HttpContext) (db: Entity.AppDbContext) (payload: MoveTodoRequest) =
+let private moveTodoByPosition (ctx: Microsoft.AspNetCore.Http.HttpContext) (userId: int) (payload: MoveTodoRequest) =
     asyncResult {
-        let! userId = ctx |> Auth.tryGetUserId |> AsyncResult.ofResult
-
         do!
             payload.NewPosition < 0
             |> Result.requireFalse (ValidationError "Todo position must be non-negative.")
 
-        do! moveTodo db userId payload.TodoId payload.NewPosition |> Async.AwaitTask
+        do! moveTodo ctx userId payload.TodoId payload.NewPosition |> Async.AwaitTask
     }
 
 let todoApiImplementation (ctx: Microsoft.AspNetCore.Http.HttpContext) : ITodoApi =
-    let db = ctx.GetService<Entity.AppDbContext>()
     {
-        GetTodos = getTodos ctx db
-        CreateTodo = createTodo ctx db
-        ToggleTodo = toggleTodoById ctx db
-        DeleteTodo = deleteTodoById ctx db
-        ClearCompleted = clearCompletedTodos ctx db
-        MoveTodo = moveTodoByPosition ctx db
+        GetTodos =
+            fun () ->
+                Auth.requireUser ctx <| fun userId -> getTodos ctx userId
+        CreateTodo =
+            fun payload ->
+                Auth.requireUser ctx <| fun userId -> createTodo ctx userId payload
+        ToggleTodo =
+            fun id ->
+                Auth.requireTodoAuthorization ctx id <| fun userId -> toggleTodoById ctx userId id
+        DeleteTodo =
+            fun id ->
+                Auth.requireTodoAuthorization ctx id <| fun userId -> deleteTodoById ctx userId id
+        ClearCompleted =
+            fun () ->
+                Auth.requireUser ctx <| fun userId -> clearCompletedTodos ctx userId
+        MoveTodo =
+            fun payload ->
+                Auth.requireTodoAuthorization ctx payload.TodoId <| fun userId -> moveTodoByPosition ctx userId payload
     }
 
 let todosApiHandler: HttpHandler =

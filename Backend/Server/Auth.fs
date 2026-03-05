@@ -10,7 +10,6 @@ open Microsoft.AspNetCore.Authentication.Cookies
 open Microsoft.AspNetCore.Http
 open Microsoft.EntityFrameworkCore
 open System.Linq
-open System.Threading.Tasks
 open Shared
 
 let private hasAuthenticatedIdentity (user: ClaimsPrincipal) =
@@ -25,26 +24,48 @@ let requiresAuthentication: HttpHandler =
         else
             (setStatusCode 401 >=> text "User not authenticated.") next ctx
 
-let tryGetUserId (ctx: HttpContext) : Result<int, AppError> =
-    ctx.User.FindFirst "UserId"
-    |> Option.ofObj
-    |> Option.bind (fun claim -> Option.tryParse<int> claim.Value)
-    |> Result.requireSome Unauthorized
+let requireUser
+    (ctx: HttpContext)
+    (operation: int -> Async<Result<'ok, AppError>>)
+    : Async<Result<'ok, AppError>> =
+    asyncResult {
+        let! userId =
+            ctx.User.FindFirst "UserId"
+            |> Option.ofObj
+            |> Option.bind (fun claim -> Option.tryParse<int> claim.Value)
+            |> Result.requireSome Unauthorized
+            |> AsyncResult.ofResult
+
+        return! operation userId
+    }
+
+let requireTodoAuthorization
+    (ctx: HttpContext)
+    (todoId: int)
+    (operation: int -> Async<Result<'ok, AppError>>)
+    : Async<Result<'ok, AppError>> =
+    requireUser ctx <| fun userId ->
+        asyncResult {
+            let db = ctx.GetService<Entity.AppDbContext>()
+            let! foundTodo =
+                db.Todos.FirstOrDefaultAsync(fun t -> t.Id = todoId)
+                |> Async.AwaitTask
+                |> AsyncResult.ofAsync
+                |> AsyncResult.map Option.ofObj
+                |> AsyncResult.bindRequireSome NotFound
+
+            do!
+                foundTodo.UserId = userId
+                |> Result.requireTrue Unauthorized
+                |> AsyncResult.ofResult
+
+            return! operation userId
+        }
 
 let private toSharedUser (user: Entity.User) : User = {
     Id = user.Id
     Email = user.Email
 }
-
-let private fromTask (work: Task<'a>) : Async<Result<'a, AppError>> =
-    work |> Async.AwaitTask |> AsyncResult.ofAsync
-
-let private findUserByEmail (db: Entity.AppDbContext) (email: string) =
-    db.Users.AsNoTracking().FirstOrDefaultAsync(fun u -> u.Email = email)
-
-let private requireEmailAndPassword error email password =
-    (String.IsNullOrWhiteSpace(email) || String.IsNullOrWhiteSpace(password))
-    |> Result.requireFalse error
 
 let private createPrincipal (email: string) (userId: int) =
     let claims = [
@@ -65,11 +86,15 @@ let private signInUser (ctx: HttpContext) (user: Entity.User) =
 
 let private register (ctx: HttpContext) (db: Entity.AppDbContext) (req: RegisterRequest) =
     asyncResult {
-        do! requireEmailAndPassword (ValidationError "Email and password are required.") req.Email req.Password
+        do!
+            (String.IsNullOrWhiteSpace(req.Email) || String.IsNullOrWhiteSpace(req.Password))
+            |> Result.requireFalse (ValidationError "Email and password are required.")
+            |> AsyncResult.ofResult
 
         do!
-            findUserByEmail db req.Email
-            |> fromTask
+            db.Users.AsNoTracking().FirstOrDefaultAsync(fun u -> u.Email = req.Email)
+            |> Async.AwaitTask
+            |> AsyncResult.ofAsync
             |> AsyncResult.map Option.ofObj
             |> AsyncResult.bindRequireNone Conflict
 
@@ -79,7 +104,11 @@ let private register (ctx: HttpContext) (db: Entity.AppDbContext) (req: Register
         newUser.PasswordHash <- passwordHash
         db.Users.Add(newUser) |> ignore
 
-        do! db.SaveChangesAsync() |> fromTask |> AsyncResult.ignore
+        do!
+            db.SaveChangesAsync()
+            |> Async.AwaitTask
+            |> AsyncResult.ofAsync
+            |> AsyncResult.ignore
         do! signInUser ctx newUser
 
         return toSharedUser newUser
@@ -87,11 +116,15 @@ let private register (ctx: HttpContext) (db: Entity.AppDbContext) (req: Register
 
 let private login (ctx: HttpContext) (db: Entity.AppDbContext) (req: LoginRequest) =
     asyncResult {
-        do! requireEmailAndPassword InvalidCredentials req.Email req.Password
+        do!
+            (String.IsNullOrWhiteSpace(req.Email) || String.IsNullOrWhiteSpace(req.Password))
+            |> Result.requireFalse InvalidCredentials
+            |> AsyncResult.ofResult
 
         let! user =
-            findUserByEmail db req.Email
-            |> fromTask
+            db.Users.AsNoTracking().FirstOrDefaultAsync(fun u -> u.Email = req.Email)
+            |> Async.AwaitTask
+            |> AsyncResult.ofAsync
             |> AsyncResult.map Option.ofObj
             |> AsyncResult.bindRequireSome InvalidCredentials
 
