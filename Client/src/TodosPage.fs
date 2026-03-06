@@ -209,7 +209,7 @@ let view theme (user: User option) (model: Model) (dispatch: Msg -> unit) (onTog
   let filterButton (label: string, filter: Filter) =
     Html.button [
       prop.className (
-        "cursor-pointer font-bold "
+        "cursor-pointer font-bold text-sm tracking-[-0.25px] "
         + if model.Filter = filter then "text-blue-500"
           else if isDark then "text-navy-850 hover:text-purple-100"
           else "text-gray-600 hover:text-navy-850"
@@ -222,12 +222,15 @@ let view theme (user: User option) (model: Model) (dispatch: Msg -> unit) (onTog
     match model.Todos with
     | Loading ->
       Html.div [
-        prop.className "p-5 text-center text-gray-600 dark:text-purple-700"
+        prop.className (
+          "px-5 md:px-6 py-4 md:py-5 text-center text-xs md:text-lg tracking-[-0.25px] "
+          + if isDark then "text-purple-700" else "text-gray-600"
+        )
         prop.text "Loading..."
       ]
     | Errored msg ->
       Html.div [
-        prop.className "p-5 text-center text-red-500"
+        prop.className "px-5 md:px-6 py-4 md:py-5 text-center text-xs md:text-lg tracking-[-0.25px] text-red-500"
         prop.text $"Failed to load todos: {msg}"
       ]
     | Loaded todos ->
@@ -268,18 +271,25 @@ let view theme (user: User option) (model: Model) (dispatch: Msg -> unit) (onTog
 
       Html.div [
         prop.className (
-          "rounded-md shadow-xl transition-colors duration-300 divide-y "
+          "rounded-md transition-colors duration-300 divide-y "
           + if isDark then
-              "bg-navy-900 divide-purple-800"
+              "bg-navy-900 divide-purple-800 shadow-[0px_35px_50px_0px_rgba(0,0,0,0.5)]"
             else
-              "bg-white divide-gray-300"
+              "bg-white divide-gray-300 shadow-[0px_35px_50px_0px_rgba(194,195,214,0.5)]"
         )
         prop.children [
           Html.ul [
+            prop.className (
+              "divide-y "
+              + if isDark then "divide-purple-800" else "divide-gray-300"
+            )
             prop.children [
               if List.isEmpty filtered then
                 Html.li [
-                  prop.className "p-4 text-center text-gray-600 dark:text-purple-700"
+                  prop.className (
+                    "px-5 md:px-6 py-4 md:py-5 text-center text-xs md:text-lg tracking-[-0.25px] "
+                    + if isDark then "text-purple-700" else "text-gray-600"
+                  )
                   prop.text "No todos here!"
                 ]
               else
@@ -298,7 +308,7 @@ let view theme (user: User option) (model: Model) (dispatch: Msg -> unit) (onTog
                     prop.key todo.Id
                     prop.className (
                       String.concat " " [
-                        "group flex items-center gap-4 px-5 py-4 cursor-pointer active:cursor-grabbing"
+                        "group flex items-center gap-4 md:gap-6 px-5 md:px-6 py-4 md:py-5 cursor-pointer active:cursor-grabbing"
                         indicatorClass
                         if isDragged then
                           "opacity-60"
@@ -322,7 +332,7 @@ let view theme (user: User option) (model: Model) (dispatch: Msg -> unit) (onTog
                       Html.button [
                         prop.className (
                           String.concat " " [
-                            "cursor-pointer w-6 h-6 rounded-full flex items-center justify-center"
+                            "cursor-pointer w-5 h-5 md:w-6 md:h-6 rounded-full flex items-center justify-center"
                             if todo.Completed then
                               "bg-gradient-to-br from-gradient-1-left to-gradient-1-right"
                             else if isDark then
@@ -342,7 +352,7 @@ let view theme (user: User option) (model: Model) (dispatch: Msg -> unit) (onTog
                       ]
                       Html.p [
                         prop.className (
-                          "grow "
+                          "grow text-xs md:text-lg tracking-[-0.25px] "
                           + if todo.Completed then
                               (if isDark then
                                  "line-through text-purple-700"
@@ -371,7 +381,7 @@ let view theme (user: User option) (model: Model) (dispatch: Msg -> unit) (onTog
           ]
           Html.div [
             prop.className (
-              "flex justify-between items-center text-sm p-4 "
+              "flex justify-between items-center text-xs md:text-sm px-5 md:px-6 py-4 tracking-[-0.25px] "
               + if isDark then "text-purple-700" else "text-gray-600"
             )
             prop.children [
@@ -407,7 +417,6 @@ let view theme (user: User option) (model: Model) (dispatch: Msg -> unit) (onTog
     )
     prop.style [
       style.fontFamily "var(--font-josefin-sans)"
-      style.fontSize 18
     ]
     prop.children [
       Html.div [
@@ -420,10 +429,10 @@ let view theme (user: User option) (model: Model) (dispatch: Msg -> unit) (onTog
         )
       ]
       Html.main [
-        prop.className "relative px-6 md:px-0 md:max-w-xl mx-auto -mt-36 md:-mt-48"
+        prop.className "relative px-6 md:px-0 md:max-w-xl mx-auto -mt-40 md:-mt-52"
         prop.children [
           Html.div [
-            prop.className "flex justify-between items-center mb-8"
+            prop.className "flex justify-between items-center mb-8 md:mb-12"
             prop.children [
               Html.h1 [
                 prop.className "text-3xl md:text-4xl font-bold text-white tracking-[0.3em]"
@@ -457,12 +466,15 @@ let view theme (user: User option) (model: Model) (dispatch: Msg -> unit) (onTog
             ]
           ]
           Html.div [
-            prop.className "mb-6"
+            prop.className "mb-4 md:mb-6"
             prop.children [
               Html.form [
                 prop.className (
-                  "flex items-center gap-4 px-5 py-3.5 rounded-md transition-colors duration-300 "
-                  + if isDark then "bg-navy-900" else "bg-white"
+                  "flex items-center gap-4 md:gap-6 px-5 md:px-6 py-3.5 md:py-4 rounded-md transition-colors duration-300 "
+                  + if isDark then
+                      "bg-navy-900 shadow-[0px_35px_50px_0px_rgba(0,0,0,0.5)]"
+                    else
+                      "bg-white shadow-[0px_35px_50px_0px_rgba(194,195,214,0.5)]"
                 )
                 prop.onSubmit (fun ev ->
                   ev.preventDefault ()
@@ -473,18 +485,17 @@ let view theme (user: User option) (model: Model) (dispatch: Msg -> unit) (onTog
                     prop.type' "submit"
                     prop.className (
                       String.concat " " [
-                        "cursor-pointer appearance-none p-0 w-6 h-6 aspect-square rounded-full flex items-center justify-center flex-shrink-0 border"
+                        "cursor-pointer appearance-none p-0 w-5 h-5 md:w-6 md:h-6 aspect-square rounded-full flex items-center justify-center flex-shrink-0 border"
                         if isDark then
                           "[--todo-circle-fill:var(--color-navy-900)] border-purple-800 hover:border-transparent hover:[background:linear-gradient(var(--todo-circle-fill),var(--todo-circle-fill))_padding-box,linear-gradient(135deg,var(--color-gradient-1-left),var(--color-gradient-1-right))_border-box]"
                         else
                           "[--todo-circle-fill:#fff] border-gray-300 hover:border-transparent hover:[background:linear-gradient(var(--todo-circle-fill),var(--todo-circle-fill))_padding-box,linear-gradient(135deg,var(--color-gradient-1-left),var(--color-gradient-1-right))_border-box]"
                       ]
                     )
-                    prop.style [style.minWidth 24; style.minHeight 24]
                   ]
                   Html.input [
                     prop.className (
-                      "cursor-text w-full bg-transparent border-none outline-none focus:outline-none focus:ring-0 focus:border-none "
+                      "cursor-text w-full bg-transparent border-none outline-none focus:outline-none focus:ring-0 focus:border-none text-xs md:text-lg tracking-[-0.25px] "
                       + if isDark then
                           "text-purple-300 placeholder:text-purple-700"
                         else
@@ -501,8 +512,11 @@ let view theme (user: User option) (model: Model) (dispatch: Msg -> unit) (onTog
           listAndFooter
           Html.div [
             prop.className (
-              "md:hidden mt-4 p-4 rounded-md flex justify-center gap-4 shadow-xl transition-colors duration-300 "
-              + if isDark then "bg-navy-900" else "bg-white"
+              "md:hidden mt-4 p-4 rounded-md flex justify-center gap-4 transition-colors duration-300 "
+              + if isDark then
+                  "bg-navy-900 shadow-[0px_35px_50px_0px_rgba(0,0,0,0.5)]"
+                else
+                  "bg-white shadow-[0px_35px_50px_0px_rgba(194,195,214,0.5)]"
             )
             prop.children [
               filterButton ("All", All)
@@ -512,7 +526,7 @@ let view theme (user: User option) (model: Model) (dispatch: Msg -> unit) (onTog
           ]
           Html.p [
             prop.className (
-              "text-center text-sm mt-10 "
+              "text-center text-sm mt-10 md:mt-6 tracking-[-0.25px] "
               + if isDark then "text-purple-700" else "text-gray-600"
             )
             prop.text "Drag and drop to reorder list"
@@ -520,7 +534,7 @@ let view theme (user: User option) (model: Model) (dispatch: Msg -> unit) (onTog
           if user.IsSome then
             Html.p [
               prop.className (
-                "text-center text-sm mt-4 "
+                "text-center text-sm mt-4 tracking-[-0.25px] "
                 + if isDark then "text-purple-700" else "text-gray-600"
               )
               prop.text $"Logged in as {user.Value.Email}"
