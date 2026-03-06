@@ -18,6 +18,21 @@ type Theme =
   | Light
   | Dark
 
+let private parseTodoFilter (value: string) =
+  match value.ToLowerInvariant() with
+  | "all" -> Some TodosPage.All
+  | "active" -> Some TodosPage.Active
+  | "completed" -> Some TodosPage.Completed
+  | _ -> None
+
+let private todoFilterToQueryValue (filter: TodosPage.Filter) =
+  match filter with
+  | TodosPage.All -> "all"
+  | TodosPage.Active -> "active"
+  | TodosPage.Completed -> "completed"
+
+let private todoFilterParam = customParam "filter" (Option.bind parseTodoFilter)
+
 let private themeStorageKey = "todo.theme"
 
 let private parseStoredTheme (value: string) =
@@ -70,6 +85,11 @@ type Msg =
   | RequestLogout
   | ToggleTheme
 
+type RouteData = {
+  Page: Page
+  TodoFilter: TodosPage.Filter option
+}
+
 module Route =
   let toHashPath (page: Page) =
     match page with
@@ -77,15 +97,45 @@ module Route =
     | RegisterPage -> "#/register"
     | TodosPage userId -> $"#/user/{userId}/todos"
 
+  let toTodosHashPath (userId: int) (filter: TodosPage.Filter) =
+    let basePath = toHashPath (TodosPage userId)
+    match filter with
+    | TodosPage.All -> basePath
+    | _ -> $"{basePath}?filter={todoFilterToQueryValue filter}"
+
+let private routeForPage (page: Page) (todosFilter: TodosPage.Filter) =
+  match page with
+  | TodosPage userId -> Route.toTodosHashPath userId todosFilter
+  | _ -> Route.toHashPath page
+
+let private defaultRoute = {
+  Page = LoginPage
+  TodoFilter = None
+}
+
 let pageParser =
   oneOf [
-    map LoginPage top
-    map TodosPage (s "user" </> i32 </> s "todos")
-    map LoginPage (s "login")
-    map RegisterPage (s "register")
+    map (fun f -> {
+      Page = LoginPage
+      TodoFilter = f
+    }) (top <?> todoFilterParam)
+    map
+      (fun userId filter -> {
+        Page = TodosPage userId
+        TodoFilter = filter
+      })
+      ((s "user" </> i32 </> s "todos") <?> todoFilterParam)
+    map (fun f -> {
+      Page = LoginPage
+      TodoFilter = f
+    }) ((s "login") <?> todoFilterParam)
+    map (fun f -> {
+      Page = RegisterPage
+      TodoFilter = f
+    }) ((s "register") <?> todoFilterParam)
   ]
 
-let urlParser: Browser.Types.Location -> Page option = parseHash pageParser
+let urlParser: Browser.Types.Location -> RouteData option = parseHash pageParser
 
 let private guardPageForUser (requestedPage: Page) (user: User option) =
   match requestedPage, user with
@@ -95,8 +145,10 @@ let private guardPageForUser (requestedPage: Page) (user: User option) =
   | (LoginPage | RegisterPage), Some currentUser -> TodosPage currentUser.Id
   | requestedPage, None -> requestedPage
 
-let urlUpdate (result: Page option) (model: Model) : Model * Cmd<Msg> =
-  let requestedPage = result |> Option.defaultValue LoginPage
+let urlUpdate (result: RouteData option) (model: Model) : Model * Cmd<Msg> =
+  let requestedRoute = result |> Option.defaultValue defaultRoute
+  let requestedPage = requestedRoute.Page
+  let filterFromUrl = requestedRoute.TodoFilter |> Option.defaultValue TodosPage.All
   let actualPage =
     if model.AuthChecked then
       guardPageForUser requestedPage model.User
@@ -108,12 +160,17 @@ let urlUpdate (result: Page option) (model: Model) : Model * Cmd<Msg> =
     match actualPage with
     | LoginPage -> {model with Page = LoginPage; Login = LoginPage.init ()}
     | RegisterPage -> {model with Page = RegisterPage; Register = RegisterPage.init ()}
-    | _ -> {model with Page = actualPage}
+    | TodosPage _ ->
+      {
+        model with
+          Page = actualPage
+          Todos = {model.Todos with Filter = filterFromUrl}
+      }
 
   let shouldRedirect = model.AuthChecked && (result.IsNone || requestedPage <> actualPage)
   let redirectCmd =
     if shouldRedirect then
-      Navigation.newUrl (Route.toHashPath actualPage)
+      Navigation.newUrl (routeForPage actualPage filterFromUrl)
     else
       Cmd.none
 
@@ -125,8 +182,9 @@ let urlUpdate (result: Page option) (model: Model) : Model * Cmd<Msg> =
   newModel, Cmd.batch [redirectCmd; loadTodosCmd]
 
 // Init
-let init (result: Option<Page>) : Model * Cmd<Msg> =
-  let page = result |> Option.defaultValue LoginPage
+let init (result: Option<RouteData>) : Model * Cmd<Msg> =
+  let route = result |> Option.defaultValue defaultRoute
+  let page = route.Page
   let (todosModel, todosCmd) = TodosPage.init ()
   let model = {
     Page = page
@@ -139,7 +197,7 @@ let init (result: Option<Page>) : Model * Cmd<Msg> =
     Login = LoginPage.init ()
     Register = RegisterPage.init ()
   }
-  let (newModel, routeCmd) = urlUpdate (Some page) model
+  let (newModel, routeCmd) = urlUpdate (Some route) model
 
   newModel,
   Cmd.batch [
@@ -167,15 +225,29 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
   | ThemePersisted -> model, Cmd.none
   | TodosMsg todosMsg ->
     let (newTodosModel, newTodosCmd) = TodosPage.update todosMsg model.Todos
+    let filterNavigationCmd =
+      match todosMsg, model.Page with
+      | TodosPage.SetFilter filter, TodosPage userId ->
+        if model.Todos.Filter = filter then
+          Cmd.none
+        else
+          Navigation.newUrl (Route.toTodosHashPath userId filter)
+      | _ -> Cmd.none
     // Check if this is a logout request from TodosPage
     match todosMsg with
     | TodosPage.RequestLogout ->
       {model with Todos = newTodosModel},
       Cmd.batch [
         Cmd.map TodosMsg newTodosCmd
+        filterNavigationCmd
         Cmd.ofMsg RequestLogout
       ]
-    | _ -> {model with Todos = newTodosModel}, Cmd.map TodosMsg newTodosCmd
+    | _ ->
+      {model with Todos = newTodosModel},
+      Cmd.batch [
+        Cmd.map TodosMsg newTodosCmd
+        filterNavigationCmd
+      ]
   | LoginMsg loginMsg ->
     let (newLoginModel, newLoginCmd) = LoginPage.update loginMsg model.Login
     // Check if login was successful
@@ -191,7 +263,7 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
       },
       Cmd.batch [
         Cmd.map LoginMsg newLoginCmd
-        Navigation.newUrl (Route.toHashPath (TodosPage user.Id))
+        Navigation.newUrl (Route.toTodosHashPath user.Id model.Todos.Filter)
       ]
     | _ -> {model with Login = newLoginModel}, Cmd.map LoginMsg newLoginCmd
 
@@ -211,7 +283,7 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
       },
       Cmd.batch [
         Cmd.map RegisterMsg newRegisterCmd
-        Navigation.newUrl (Route.toHashPath (TodosPage user.Id))
+        Navigation.newUrl (Route.toTodosHashPath user.Id model.Todos.Filter)
       ]
     | _ -> {model with Register = newRegisterModel}, Cmd.map RegisterMsg newRegisterCmd
 
@@ -227,7 +299,7 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
 
     let redirectCmd =
       if shouldRedirect then
-        Navigation.newUrl (Route.toHashPath guardedPage)
+        Navigation.newUrl (routeForPage guardedPage model.Todos.Filter)
       else
         Cmd.none
 
