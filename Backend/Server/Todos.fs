@@ -4,7 +4,6 @@ open FsToolkit.ErrorHandling
 open Giraffe
 open Microsoft.EntityFrameworkCore
 open System.Linq
-open System.Threading.Tasks
 open Shared
 
 let private toSharedTodo (todo: Entity.Todo) : Todo = {
@@ -102,6 +101,21 @@ let private clearCompleted (ctx: Microsoft.AspNetCore.Http.HttpContext) (userId:
         ()
     }
 
+/// <summary>
+/// Move a todo to a new position while preserving a contiguous per-user ordering.
+/// </summary>
+/// <remarks>
+/// - Why transaction: this reorder intentionally uses multiple <c>SaveChangesAsync</c> calls
+///   (park moved row, shift neighbors, then place moved row at destination).
+/// - Constraint safety: <c>(UserId, Position)</c> is uniquely constrained, so exposing partial
+///   intermediate states can violate ordering guarantees for concurrent readers.
+/// - Atomicity: wrapping all steps in one database transaction makes the move all-or-nothing,
+///   preventing partially-applied reorders if any step fails.
+/// </remarks>
+/// <param name="ctx">Request context used to resolve services.</param>
+/// <param name="userId">Owner of the todo list being reordered.</param>
+/// <param name="todoId">Identifier of the todo item to move.</param>
+/// <param name="newPosition">Requested destination index (clamped to valid range).</param>
 let private moveTodo (ctx: Microsoft.AspNetCore.Http.HttpContext) (userId: int) (todoId: int) (newPosition: int) =
     taskResult {
         let db = ctx.GetService<Entity.AppDbContext>()

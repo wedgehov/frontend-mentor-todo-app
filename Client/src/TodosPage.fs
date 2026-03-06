@@ -109,6 +109,19 @@ module Api =
 
 // =============== Update ===============
 
+/// <summary>
+/// Reorder a todo by moving one item to a target index.
+/// </summary>
+/// <remarks>
+/// - Index contract: <c>toIndex</c> is the hovered row index in the original (pre-removal) list.
+/// - Geometry of the move:
+///   - moving up: destination indices are unchanged.
+///   - moving down: removing the source shifts destination rows left by one.
+/// - Result: inserting into the post-removal list at the same <c>toIndex</c> lands on the hovered row.
+/// </remarks>
+/// <param name="todos">Original todo ordering.</param>
+/// <param name="fromIndex">Source index in the original list.</param>
+/// <param name="toIndex">Hovered destination index in the original list.</param>
 let private moveTodoInList (todos: Todo list) (fromIndex: int) (toIndex: int) =
   if fromIndex = toIndex then
     todos
@@ -116,7 +129,7 @@ let private moveTodoInList (todos: Todo list) (fromIndex: int) (toIndex: int) =
     let moved = List.item fromIndex todos
     todos
     |> List.removeAt fromIndex
-    |> List.insertAt (if fromIndex < toIndex then toIndex - 1 else toIndex) moved
+    |> List.insertAt toIndex moved
 
 let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
   let logApiError action err =
@@ -162,10 +175,8 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
 
       match draggedIdx, targetIdx with
       | Some fromIdx, Some rawToIdx when fromIdx <> rawToIdx ->
-        // Dropping onto a lower row should place the dragged todo at that row's
-        // position (not one above it), so we target the next slot pre-removal.
-        let toIdx =
-          if fromIdx < rawToIdx then rawToIdx + 1 else rawToIdx
+        // toIdx is the final index contract used by both UI reorder and API persistence.
+        let toIdx = rawToIdx
 
         let reordered = moveTodoInList todos fromIdx toIdx
         {

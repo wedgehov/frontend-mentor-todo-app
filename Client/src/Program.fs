@@ -5,6 +5,7 @@ open Elmish.React
 open Elmish.Navigation
 open Elmish.UrlParser
 open Feliz
+open Browser.Dom
 open Shared
 
 // Main model
@@ -17,9 +18,38 @@ type Theme =
   | Light
   | Dark
 
+let private themeStorageKey = "todo.theme"
+
+let private parseStoredTheme (value: string) =
+  match value.ToLowerInvariant() with
+  | "light" -> Some Light
+  | "dark" -> Some Dark
+  | _ -> None
+
+let private loadSavedTheme () =
+  try
+    window.localStorage.getItem themeStorageKey
+    |> Option.ofObj
+    |> Option.bind parseStoredTheme
+    |> Option.defaultValue Dark
+  with _ ->
+    Dark
+
+let private persistTheme (theme: Theme) =
+  let value =
+    match theme with
+    | Light -> "light"
+    | Dark -> "dark"
+
+  try
+    window.localStorage.setItem (themeStorageKey, value)
+  with _ ->
+    ()
+
 type Model = {
   Page: Page
   User: User option
+  AuthChecked: bool
   Theme: Theme
   LogoutError: string option
   IsLoggingOut: bool
@@ -33,6 +63,9 @@ type Msg =
   | TodosMsg of TodosPage.Msg
   | LoginMsg of LoginPage.Msg
   | RegisterMsg of RegisterPage.Msg
+  | InitAuthResult of Result<User, AppError>
+  | ThemeLoaded of Theme
+  | ThemePersisted
   | LogoutResult of Result<unit, AppError>
   | RequestLogout
   | ToggleTheme
@@ -64,7 +97,11 @@ let private guardPageForUser (requestedPage: Page) (user: User option) =
 
 let urlUpdate (result: Page option) (model: Model) : Model * Cmd<Msg> =
   let requestedPage = result |> Option.defaultValue LoginPage
-  let actualPage = guardPageForUser requestedPage model.User
+  let actualPage =
+    if model.AuthChecked then
+      guardPageForUser requestedPage model.User
+    else
+      requestedPage
 
   // When navigating to a page, reset its specific state to clear old form data.
   let newModel =
@@ -73,7 +110,7 @@ let urlUpdate (result: Page option) (model: Model) : Model * Cmd<Msg> =
     | RegisterPage -> {model with Page = RegisterPage; Register = RegisterPage.init ()}
     | _ -> {model with Page = actualPage}
 
-  let shouldRedirect = result.IsNone || requestedPage <> actualPage
+  let shouldRedirect = model.AuthChecked && (result.IsNone || requestedPage <> actualPage)
   let redirectCmd =
     if shouldRedirect then
       Navigation.newUrl (Route.toHashPath actualPage)
@@ -81,8 +118,8 @@ let urlUpdate (result: Page option) (model: Model) : Model * Cmd<Msg> =
       Cmd.none
 
   let loadTodosCmd =
-    match actualPage, model.User with
-    | TodosPage _, Some _ -> Cmd.ofMsg (TodosMsg TodosPage.LoadTodos)
+    match actualPage, model.User, model.AuthChecked with
+    | TodosPage _, Some _, true -> Cmd.ofMsg (TodosMsg TodosPage.LoadTodos)
     | _ -> Cmd.none
 
   newModel, Cmd.batch [redirectCmd; loadTodosCmd]
@@ -94,6 +131,7 @@ let init (result: Option<Page>) : Model * Cmd<Msg> =
   let model = {
     Page = page
     User = None
+    AuthChecked = false
     Theme = Dark
     LogoutError = None
     IsLoggingOut = false
@@ -107,20 +145,26 @@ let init (result: Option<Page>) : Model * Cmd<Msg> =
   Cmd.batch [
     todosCmd |> Cmd.map TodosMsg
     routeCmd
+    Auth.getCurrentUser InitAuthResult
+    Cmd.OfFunc.perform loadSavedTheme () ThemeLoaded
   ]
 
 // Update
 let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
   match msg with
   | ToggleTheme ->
+    let nextTheme =
+      match model.Theme with
+      | Light -> Dark
+      | Dark -> Light
+
     {
       model with
-        Theme =
-          (match model.Theme with
-           | Light -> Dark
-           | Dark -> Light)
+        Theme = nextTheme
     },
-    Cmd.none
+    Cmd.OfFunc.perform persistTheme nextTheme (fun _ -> ThemePersisted)
+  | ThemeLoaded theme -> {model with Theme = theme}, Cmd.none
+  | ThemePersisted -> model, Cmd.none
   | TodosMsg todosMsg ->
     let (newTodosModel, newTodosCmd) = TodosPage.update todosMsg model.Todos
     // Check if this is a logout request from TodosPage
@@ -140,6 +184,7 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
       {
         model with
           User = Some user
+          AuthChecked = true
           Login = newLoginModel
           LogoutError = None
           IsLoggingOut = false
@@ -159,6 +204,7 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
       {
         model with
           User = Some user
+          AuthChecked = true
           Register = newRegisterModel
           LogoutError = None
           IsLoggingOut = false
@@ -169,6 +215,32 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
       ]
     | _ -> {model with Register = newRegisterModel}, Cmd.map RegisterMsg newRegisterCmd
 
+  | InitAuthResult result ->
+    let nextUser =
+      match result with
+      | Ok user -> Some user
+      | Error _ -> None
+
+    let modelWithAuth = {model with User = nextUser; AuthChecked = true}
+    let guardedPage = guardPageForUser modelWithAuth.Page modelWithAuth.User
+    let shouldRedirect = guardedPage <> modelWithAuth.Page
+
+    let redirectCmd =
+      if shouldRedirect then
+        Navigation.newUrl (Route.toHashPath guardedPage)
+      else
+        Cmd.none
+
+    let loadTodosCmd =
+      if shouldRedirect then
+        Cmd.none
+      else
+        match guardedPage, modelWithAuth.User with
+        | TodosPage _, Some _ -> Cmd.ofMsg (TodosMsg TodosPage.LoadTodos)
+        | _ -> Cmd.none
+
+    {modelWithAuth with Page = guardedPage}, Cmd.batch [redirectCmd; loadTodosCmd]
+
   | LogoutResult (Ok ()) ->
     // On logout success, clear auth-related state and trigger URL navigation.
     // The resulting URL change will run through urlUpdate and set the page.
@@ -176,6 +248,7 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
     {
       model with
         User = None
+        AuthChecked = true
         IsLoggingOut = false
         LogoutError = None
         Todos = newTodosModel

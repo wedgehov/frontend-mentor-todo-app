@@ -9,7 +9,6 @@ open Microsoft.AspNetCore.Authentication
 open Microsoft.AspNetCore.Authentication.Cookies
 open Microsoft.AspNetCore.Http
 open Microsoft.EntityFrameworkCore
-open System.Linq
 open Shared
 
 let private hasAuthenticatedIdentity (user: ClaimsPrincipal) =
@@ -144,6 +143,20 @@ let private logout (ctx: HttpContext) () =
             |> AsyncResult.ofAsync
     }
 
+let private getCurrentUser (ctx: HttpContext) () =
+    requireUser ctx <| fun userId ->
+        asyncResult {
+            let db = ctx.GetService<Entity.AppDbContext>()
+            let! user =
+                db.Users.AsNoTracking().FirstOrDefaultAsync(fun u -> u.Id = userId)
+                |> Async.AwaitTask
+                |> AsyncResult.ofAsync
+                |> AsyncResult.map Option.ofObj
+                |> AsyncResult.bindRequireSome Unauthorized
+
+            return toSharedUser user
+        }
+
 let authApiImplementation (ctx: HttpContext) : IAuthApi =
     let db = ctx.GetService<Entity.AppDbContext>()
 
@@ -151,6 +164,7 @@ let authApiImplementation (ctx: HttpContext) : IAuthApi =
         Register = register ctx db
         Login = login ctx db
         Logout = logout ctx
+        GetCurrentUser = getCurrentUser ctx
     }
 
 let authApiHandler: HttpHandler =

@@ -22,6 +22,7 @@ type IAuthApi = {
     Register: RegisterRequest -> Async<Result<User, AppError>>
     Login: LoginRequest -> Async<Result<User, AppError>>
     Logout: unit -> Async<Result<unit, AppError>>
+    GetCurrentUser: unit -> Async<Result<User, AppError>>
 }
 
 type ITodoApi = {

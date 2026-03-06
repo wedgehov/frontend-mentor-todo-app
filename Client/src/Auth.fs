@@ -33,3 +33,10 @@ let logout (onResult: Result<unit, AppError> -> 'msg) : Cmd<'msg> =
     ()
     onResult
     (asUnexpected onResult)
+
+let getCurrentUser (onResult: Result<User, AppError> -> 'msg) : Cmd<'msg> =
+  Cmd.OfAsync.either
+    ApiClient.AuthApi.GetCurrentUser
+    ()
+    onResult
+    (asUnexpected onResult)
