@@ -8,7 +8,6 @@ This project implements a complete Todo application with a modern F# stack for b
 
 - [Overview](#overview)
   - [The challenge](#the-challenge)
-  - [Screenshot](#screenshot)
   - [Links](#links)
 - [My process](#my-process)
   - [Built with](#built-with)
@@ -43,16 +42,10 @@ Users should be able to:
 - **Database Migrations**: The database schema is managed using EF Core Migrations, allowing for version-controlled, incremental updates.
 - **Todo Ordering Strategy**: Reordering persists via an integer `position` per todo. Moving an item uses an `O(n)` shift (increment/decrement affected rows) for simplicity. Order-key strategies (for example LexoRank/fractional keys) were considered, but deferred to keep this app easier to reason about.
 
-### Screenshot
-
-![](./design/desktop-preview.jpg)
-
-*(Note: Replace with an actual screenshot of the running application)*
-
 ### Links
 
-- Solution URL: Add solution URL here
-- Live Site URL: Add live site URL here
+- Solution URL: [GitHub Repository](https://github.com/wedgehov/frontend-mentor-todo-app)
+- Live Site URL: [https://fm-todo-app-main.vhovet.com](https://fm-todo-app-main.vhovet.com)
 
 ## My process
 
@@ -82,119 +75,21 @@ This project is a full-stack application built entirely with F# and modern web t
 **DevOps & Tooling:**
 
 - Docker & Docker Compose for containerization and local development
-- Nginx as a reverse proxy and for serving frontend static files
 - GitHub Actions for Continuous Integration (building and pushing Docker images to GitHub Container Registry)
 
 ### What I learned
 
-This project was a great opportunity to build a complete, modern, full-stack application using F#. Some key takeaways include:
+One of the most interesting challenges in this project was implementing the drag-and-drop list reordering feature. I chose to handle the ordering by assigning an integer `position` to each todo item. When a user drags and drops an item, the application calculates the new position and performs an `O(n)` shift on the backend, incrementing or decrementing the positions of the affected rows. 
 
-- **End-to-end F#:** Demonstrating the viability of F# for both frontend (via Fable) and backend development, enabling a consistent development experience.
-- **Elmish Architecture:** Implementing a robust and predictable state management pattern on the frontend.
-- **Database Migrations with EF Core:** Implementing a robust strategy for managing database schema changes, with different approaches for development and production environments.
-- **Secure Authentication Flow:** Building a complete user registration and login system with secure password hashing (BCrypt) and cookie-based sessions.
-- **Client-Side Routing:** Using `Elmish.UrlParser` to create a seamless multi-page experience within a single-page application, complete with protected routes that require authentication.
-- **Containerization with Docker:** Setting up a multi-container application with `docker-compose`, including a database, backend, and a frontend served by Nginx. This ensures a consistent development and deployment environment.
-- **CI with GitHub Actions:** Automating the build and push process for Docker images, which is a foundational step for Continuous Deployment.
-
-Here's a snippet from the backend showing the Giraffe route handler for user registration:
-
-```fsharp
-// Backend/Server/Program.fs
-
-let handleRegister : HttpHandler = fun next ctx -> task {
-    let db = ctx.GetService<AppDbContext>()
-    let! req = ctx.BindJsonAsync<RegisterUserRequest>()
-
-    if req = null || String.IsNullOrWhiteSpace(req.email) || String.IsNullOrWhiteSpace(req.password) then
-        return! (setStatusCode 400 >=> text "Email and password are required.") next ctx
-    else
-        let! existingUser = findUserByEmail db req.email
-        if existingUser <> null then
-            return! (setStatusCode 409 >=> text "A user with that email already exists.") next ctx
-        else
-            let passwordHash = BCrypt.HashPassword(req.password)
-            let newUser = { id = 0; email = req.email; passwordHash = passwordHash }
-            db.Users.Add(newUser) |> ignore
-            let! _ = db.SaveChangesAsync()
-
-            // Sign in the user after successful registration
-            let claims =
-                [ Claim(ClaimTypes.Name, newUser.email)
-                  Claim("UserId", newUser.id.ToString()) ]
-            let identity = ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme)
-            let principal = ClaimsPrincipal(identity)
-            do! ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal)
-
-            return! (setStatusCode 201 >=> json newUser) next ctx
-}
-```
-
-And the corresponding routing and page navigation logic on the frontend using Elmish:
-
-```fsharp
-// Client/src/Program.fs
-
-let urlUpdate (result: Page option) (model: Model) : Model * Cmd<Msg> =
-    match result with
-    | Some requestedPage ->
-        let needsAuth = match requestedPage with | TodosPage -> true | _ -> false
-        let isAuthenticated = model.User.IsSome
-
-        // If user needs auth for the requested page but isn't authenticated,
-        // force the page to be LoginPage. Otherwise, use the requested page.
-        let actualPage =
-            if needsAuth && not isAuthenticated then LoginPage
-            else requestedPage
-
-        { model with Page = actualPage }, Cmd.none
-    | None -> model, Cmd.none // No page found, do nothing
-
-// ...
-
-let start () =
-    Program.mkProgram init update view
-    |> Program.toNavigable urlParser urlUpdate // Wires up the routing
-    |> Program.withReactBatched "root"
-    |> Program.run
-```
-
-### Database Migration Strategy
-
-This project uses EF Core Migrations to manage the database schema. The strategy for applying migrations differs between development and production environments.
-
-#### Approach 1: Automatic Migration on Startup (For Local & Dev Environments)
-
-For local development (`docker-compose`) and the remote `dev` environment, the application is configured to automatically apply any pending migrations when it starts up. This is achieved by calling `dbContext.Database.Migrate()` in `Program.fs`.
-
-*   **Pros:**
-    *   **Simplicity & Convenience:** Extremely easy to set up and ensures the database is always in sync with the code after every deployment or restart, which is ideal for rapid iteration.
-*   **Cons & Caveats:**
-    *   **Not Safe for Multi-Replica Deployments:** This approach can cause race conditions and deployment failures if the application is running with more than one replica (pod in Kubernetes). The `dev` environment **must** be configured to run a single replica for this to be safe.
-    *   **Requires Elevated Permissions:** The application's database user needs permissions to alter the schema (`ALTER`, `CREATE`), which is not ideal from a security perspective.
-    *   **Hides Production Deployment Flow:** The deployment process for `dev` is different from how `test` and `prod` should be handled, which can mask potential issues.
-
-#### Approach 2: Kubernetes Job for Migrations (For Test, Staging & Production)
-
-For production-like environments, the recommended best practice is to decouple migration from the application startup.
-
-*   **How it Works:** The CI/CD pipeline first deploys a short-lived Kubernetes `Job` whose only task is to run the database migrations. Only after this job completes successfully does the pipeline proceed to deploy the new version of the main application.
-*   **Pros:**
-    *   **Safe for Production:** Eliminates race conditions, making it safe for multi-replica, high-availability setups.
-    *   **Improved Security:** Allows the migration job to use a database account with elevated permissions, while the main application runs with a less-privileged account that cannot alter the schema.
-    *   **Controlled Deployments:** Makes schema migration an explicit, visible step in the deployment process. If it fails, the application deployment is aborted, preventing the app from running against an incorrect schema.
-
-This project currently uses **Approach 1** for simplicity in the development phase. The transition to **Approach 2** is a planned step for when `test` and `prod` environments are configured.
-
-**Runtime Note (dev/docker-compose):** The application configures EF Core to discover migrations from the main `Entity` assembly. For Kubernetes test/staging/prod environments, migrations should still be run via a dedicated Job before the application deploys, which is the recommended best practice.
+While this approach is straightforward and easy to reason about for a small-scale application, it presented some challenges in ensuring the UI state and the backend state remained perfectly synchronized during the drag-and-drop operation. I had to carefully align the index contract between the Elmish frontend and the Giraffe backend so that the final target index used by the UI reorder matched the `MoveTodo` API payload.
 
 ### Continued development
 
 Future improvements could include:
 
-- Enhancing drag-and-drop interactions (for example drop-zones/animations) and evaluating order-key ranking if list scale or concurrency grows.
+- Enhancing drag-and-drop interactions (for example drop-zones/animations) and evaluating order-key ranking (like LexoRank or fractional keys) if list scale or concurrency grows.
 - Writing more comprehensive tests for both frontend and backend.
-- Implementing the Kubernetes Job pattern (Approach 2) for database migrations as `test` and `prod` environments are introduced.
+- Implementing a robust Kubernetes Job pattern for database migrations as `test` and `prod` environments are introduced, decoupling migration from the application startup to ensure safety in multi-replica deployments.
 
 ### Useful resources
 
@@ -218,8 +113,8 @@ The easiest way to run the entire application stack is with Docker Compose.
 
 1.  Clone the repository:
     ```bash
-    git clone https://github.com/your-username/your-repo-name.git
-    cd your-repo-name
+    git clone https://github.com/wedgehov/frontend-mentor-todo-app.git
+    cd frontend-mentor-todo-app
     ```
 
 2.  Run the application using Docker Compose:
@@ -283,4 +178,4 @@ To view the logs from the backend service during development, run the following 
 docker-compose logs -f backend
 ```
 
-This will stream the backend logs to your console. Since the environment is set to `Development`
+This will stream the backend logs to your console.
