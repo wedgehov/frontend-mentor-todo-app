@@ -121,17 +121,28 @@ let private moveTodo (ctx: Microsoft.AspNetCore.Http.HttpContext) (userId: int) 
         let clampedNewPosition = max 0 (min newPosition maxPosition)
 
         if clampedNewPosition <> oldPos then
+            use! tx = db.Database.BeginTransactionAsync()
+
             let movedTodo = orderedTodos[oldPos]
+            // First, move the todo out of the indexed range so we can shift neighbors safely.
+            movedTodo.Position <- maxPosition + 1
+            let! _ = db.SaveChangesAsync()
 
             if oldPos < clampedNewPosition then
+                // Moving down: shift affected neighbors left.
                 for idx = oldPos + 1 to clampedNewPosition do
                     orderedTodos[idx].Position <- orderedTodos[idx].Position - 1
             else
-                for idx = clampedNewPosition to oldPos - 1 do
+                // Moving up: shift affected neighbors right.
+                // Iterate backwards to avoid transient unique-index collisions.
+                for idx = oldPos - 1 downto clampedNewPosition do
                     orderedTodos[idx].Position <- orderedTodos[idx].Position + 1
+
+            let! _ = db.SaveChangesAsync()
 
             movedTodo.Position <- clampedNewPosition
             let! _ = db.SaveChangesAsync()
+            do! tx.CommitAsync()
             ()
     }
 

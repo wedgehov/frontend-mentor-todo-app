@@ -113,11 +113,10 @@ let private moveTodoInList (todos: Todo list) (fromIndex: int) (toIndex: int) =
   if fromIndex = toIndex then
     todos
   else
-    let items = ResizeArray(todos)
-    let moved = items[fromIndex]
-    items.RemoveAt(fromIndex)
-    items.Insert(toIndex, moved)
-    List.ofSeq items
+    let moved = List.item fromIndex todos
+    todos
+    |> List.removeAt fromIndex
+    |> List.insertAt (if fromIndex < toIndex then toIndex - 1 else toIndex) moved
 
 let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
   let logApiError action err =
@@ -163,9 +162,10 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
 
       match draggedIdx, targetIdx with
       | Some fromIdx, Some rawToIdx when fromIdx <> rawToIdx ->
-        // Dropping on a row moves to that row's index in the full list.
-        // This avoids "no-op" moves when dragging to nearby rows.
-        let toIdx = rawToIdx
+        // Dropping onto a lower row should place the dragged todo at that row's
+        // position (not one above it), so we target the next slot pre-removal.
+        let toIdx =
+          if fromIdx < rawToIdx then rawToIdx + 1 else rawToIdx
 
         let reordered = moveTodoInList todos fromIdx toIdx
         {
@@ -272,6 +272,27 @@ let view
         | All -> todos
         | Active -> todos |> List.filter (fun t -> not t.Completed)
         | Completed -> todos |> List.filter (fun t -> t.Completed)
+
+      let todoIndexById =
+        todos
+        |> List.mapi (fun idx todo -> todo.Id, idx)
+        |> Map.ofList
+
+      let tryIndexById todoId = Map.tryFind todoId todoIndexById
+
+      let isMovingDownTo targetTodoId =
+        match model.DraggedTodoId |> Option.bind tryIndexById, tryIndexById targetTodoId with
+        | Some fromIdx, Some toIdx -> fromIdx < toIdx
+        | _ -> false
+
+      let dropIndicatorClass isDropTarget isDragged targetTodoId =
+        if not isDropTarget || isDragged then
+          ""
+        else
+          let directionClass = if isMovingDownTo targetTodoId then "border-b-2" else "border-t-2"
+          let colorClass = if isDark then "border-blue-400" else "border-blue-500"
+          directionClass + " " + colorClass
+
       let itemsLeft =
         todos
         |> List.filter (fun t -> not t.Completed)
@@ -297,13 +318,14 @@ let view
                     model.DragTargetTodoId
                     |> Option.exists (fun targetId -> targetId = todo.Id)
 
+                  let indicatorClass = dropIndicatorClass isDropTarget isDragged todo.Id
+
                   Html.li [
                     prop.key todo.Id
                     prop.className (
                       String.concat " " [
                         "group flex items-center gap-4 px-5 py-4 cursor-pointer active:cursor-grabbing"
-                        if isDropTarget && not isDragged then
-                          "border-t-2 " + if isDark then "border-blue-400" else "border-blue-500"
+                        indicatorClass
                         if isDragged then
                           "opacity-60"
                       ]
