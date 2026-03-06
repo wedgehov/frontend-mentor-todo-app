@@ -66,25 +66,13 @@ let init () : Model * Cmd<Msg> =
 
 module Api =
   let getTodos () : Cmd<Msg> =
-    Cmd.OfAsync.either
-      ApiClient.TodoApi.GetTodos
-      ()
-      GotTodos
-      (asUnexpected GotTodos)
+    Cmd.OfAsync.either ApiClient.TodoApi.GetTodos () GotTodos (asUnexpected GotTodos)
 
   let addTodo (text: string) : Cmd<Msg> =
-    Cmd.OfAsync.either
-      ApiClient.TodoApi.CreateTodo
-      {Text = text}
-      TodoAdded
-      (asUnexpected TodoAdded)
+    Cmd.OfAsync.either ApiClient.TodoApi.CreateTodo {Text = text} TodoAdded (asUnexpected TodoAdded)
 
   let toggleTodo (id: int) : Cmd<Msg> =
-    Cmd.OfAsync.either
-      ApiClient.TodoApi.ToggleTodo
-      id
-      TodoToggled
-      (asUnexpected TodoToggled)
+    Cmd.OfAsync.either ApiClient.TodoApi.ToggleTodo id TodoToggled (asUnexpected TodoToggled)
 
   let deleteTodo (id: int) : Cmd<Msg> =
     Cmd.OfAsync.either
@@ -94,11 +82,7 @@ module Api =
       (asUnexpected TodoDeleted)
 
   let clearCompleted () : Cmd<Msg> =
-    Cmd.OfAsync.either
-      ApiClient.TodoApi.ClearCompleted
-      ()
-      CompletedCleared
-      (asUnexpected CompletedCleared)
+    Cmd.OfAsync.either ApiClient.TodoApi.ClearCompleted () CompletedCleared (asUnexpected CompletedCleared)
 
   let moveTodo (todoId: int) (newPosition: int) : Cmd<Msg> =
     Cmd.OfAsync.either
@@ -148,25 +132,12 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
   | SetFilter f -> {model with Filter = f}, Cmd.none
   | ClearCompleted -> model, Api.clearCompleted ()
   | RequestLogout -> model, Cmd.none // Parent will handle this
-  | DragStarted todoId ->
-    {
-      model with
-        DraggedTodoId = Some todoId
-        DragTargetTodoId = Some todoId
-    },
-    Cmd.none
+  | DragStarted todoId -> {model with DraggedTodoId = Some todoId; DragTargetTodoId = Some todoId}, Cmd.none
   | DragEntered todoId ->
     match model.DraggedTodoId with
-    | Some draggedId when draggedId <> todoId ->
-      {model with DragTargetTodoId = Some todoId}, Cmd.none
+    | Some draggedId when draggedId <> todoId -> {model with DragTargetTodoId = Some todoId}, Cmd.none
     | _ -> model, Cmd.none
-  | DragEnded ->
-    {
-      model with
-        DraggedTodoId = None
-        DragTargetTodoId = None
-    },
-    Cmd.none
+  | DragEnded -> {model with DraggedTodoId = None; DragTargetTodoId = None}, Cmd.none
   | DroppedOnTodo targetTodoId ->
     match model.Todos, model.DraggedTodoId with
     | Loaded todos, Some draggedTodoId ->
@@ -179,27 +150,10 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
         let toIdx = rawToIdx
 
         let reordered = moveTodoInList todos fromIdx toIdx
-        {
-          model with
-            Todos = Loaded reordered
-            DraggedTodoId = None
-            DragTargetTodoId = None
-        },
+        {model with Todos = Loaded reordered; DraggedTodoId = None; DragTargetTodoId = None},
         Api.moveTodo draggedTodoId toIdx
-      | _ ->
-        {
-          model with
-            DraggedTodoId = None
-            DragTargetTodoId = None
-        },
-        Cmd.none
-    | _ ->
-      {
-        model with
-          DraggedTodoId = None
-          DragTargetTodoId = None
-      },
-      Cmd.none
+      | _ -> {model with DraggedTodoId = None; DragTargetTodoId = None}, Cmd.none
+    | _ -> {model with DraggedTodoId = None; DragTargetTodoId = None}, Cmd.none
   | LoadTodos -> model, Api.getTodos ()
 
   | GotTodos (Ok todos) -> {model with Todos = Loaded todos}, Cmd.none
@@ -250,17 +204,16 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
 
 // =============== View ===============
 
-let view
-  theme
-  (user: User option)
-  (model: Model)
-  (dispatch: Msg -> unit)
-  (onToggleTheme: unit -> unit)
-  =
+let view theme (user: User option) (model: Model) (dispatch: Msg -> unit) (onToggleTheme: unit -> unit) =
   let isDark = string theme = "Dark"
   let filterButton (label: string, filter: Filter) =
     Html.button [
-      prop.className ("cursor-pointer font-bold " + if model.Filter = filter then "text-blue-500" else if isDark then "text-navy-850 hover:text-purple-100" else "text-gray-600 hover:text-navy-850")
+      prop.className (
+        "cursor-pointer font-bold "
+        + if model.Filter = filter then "text-blue-500"
+          else if isDark then "text-navy-850 hover:text-purple-100"
+          else "text-gray-600 hover:text-navy-850"
+      )
       prop.onClick (fun _ -> SetFilter filter |> dispatch)
       prop.text label
     ]
@@ -300,7 +253,11 @@ let view
         if not isDropTarget || isDragged then
           ""
         else
-          let directionClass = if isMovingDownTo targetTodoId then "border-b-2" else "border-t-2"
+          let directionClass =
+            if isMovingDownTo targetTodoId then
+              "border-b-2"
+            else
+              "border-t-2"
           let colorClass = if isDark then "border-blue-400" else "border-blue-500"
           directionClass + " " + colorClass
 
@@ -310,7 +267,13 @@ let view
         |> List.length
 
       Html.div [
-        prop.className ("rounded-md shadow-xl transition-colors duration-300 divide-y " + if isDark then "bg-navy-900 divide-purple-800" else "bg-white divide-gray-300")
+        prop.className (
+          "rounded-md shadow-xl transition-colors duration-300 divide-y "
+          + if isDark then
+              "bg-navy-900 divide-purple-800"
+            else
+              "bg-white divide-gray-300"
+        )
         prop.children [
           Html.ul [
             prop.children [
@@ -343,7 +306,8 @@ let view
                     )
                     prop.draggable true
                     prop.onDragStart (fun ev ->
-                      ev.dataTransfer.setData ("text/plain", string todo.Id) |> ignore
+                      ev.dataTransfer.setData ("text/plain", string todo.Id)
+                      |> ignore
                       ev.dataTransfer.effectAllowed <- "move"
                       DragStarted todo.Id |> dispatch
                     )
@@ -356,7 +320,17 @@ let view
                     prop.onDragEnd (fun _ -> DragEnded |> dispatch)
                     prop.children [
                       Html.button [
-                        prop.className ("cursor-pointer w-6 h-6 rounded-full flex items-center justify-center " + if todo.Completed then "bg-gradient-to-br from-gradient-1-left to-gradient-1-right" else if isDark then "border border-purple-800" else "border border-gray-300")
+                        prop.className (
+                          String.concat " " [
+                            "cursor-pointer w-6 h-6 rounded-full flex items-center justify-center"
+                            if todo.Completed then
+                              "bg-gradient-to-br from-gradient-1-left to-gradient-1-right"
+                            else if isDark then
+                              "[--todo-circle-fill:var(--color-navy-900)] border border-purple-800 hover:border-transparent hover:[background:linear-gradient(var(--todo-circle-fill),var(--todo-circle-fill))_padding-box,linear-gradient(135deg,var(--color-gradient-1-left),var(--color-gradient-1-right))_border-box]"
+                            else
+                              "[--todo-circle-fill:#fff] border border-gray-300 hover:border-transparent hover:[background:linear-gradient(var(--todo-circle-fill),var(--todo-circle-fill))_padding-box,linear-gradient(135deg,var(--color-gradient-1-left),var(--color-gradient-1-right))_border-box]"
+                          ]
+                        )
                         prop.onClick (fun _ -> ToggleTodo todo.Id |> dispatch)
                         prop.children [
                           if todo.Completed then
@@ -367,7 +341,18 @@ let view
                         ]
                       ]
                       Html.p [
-                        prop.className ("grow " + if todo.Completed then (if isDark then "line-through text-purple-700" else "line-through text-gray-300") else if isDark then "text-purple-300" else "text-navy-850")
+                        prop.className (
+                          "grow "
+                          + if todo.Completed then
+                              (if isDark then
+                                 "line-through text-purple-700"
+                               else
+                                 "line-through text-gray-300")
+                            else if isDark then
+                              "text-purple-300"
+                            else
+                              "text-navy-850"
+                        )
                         prop.text todo.Text
                       ]
                       Html.button [
@@ -385,7 +370,10 @@ let view
             ]
           ]
           Html.div [
-            prop.className ("flex justify-between items-center text-sm p-4 " + if isDark then "text-purple-700" else "text-gray-600")
+            prop.className (
+              "flex justify-between items-center text-sm p-4 "
+              + if isDark then "text-purple-700" else "text-gray-600"
+            )
             prop.children [
               Html.p [prop.text $"{itemsLeft} items left"]
               Html.div [
@@ -397,7 +385,13 @@ let view
                 ]
               ]
               Html.button [
-                prop.className ("cursor-pointer " + if isDark then "hover:text-purple-100" else "hover:text-navy-850")
+                prop.className (
+                  "cursor-pointer "
+                  + if isDark then
+                      "hover:text-purple-100"
+                    else
+                      "hover:text-navy-850"
+                )
                 prop.onClick (fun _ -> ClearCompleted |> dispatch)
                 prop.text "Clear Completed"
               ]
@@ -407,14 +401,23 @@ let view
       ]
 
   Html.div [
-    prop.className ("min-h-screen transition-colors duration-300 " + if isDark then "bg-navy-950" else "bg-gray-50")
+    prop.className (
+      "min-h-screen transition-colors duration-300 "
+      + if isDark then "bg-navy-950" else "bg-gray-50"
+    )
     prop.style [
       style.fontFamily "var(--font-josefin-sans)"
       style.fontSize 18
     ]
     prop.children [
       Html.div [
-        prop.className ("h-[200px] md:h-[300px] bg-no-repeat bg-cover " + if isDark then "bg-[url('/images/bg-mobile-dark.jpg')] md:bg-[url('/images/bg-desktop-dark.jpg')]" else "bg-[url('/images/bg-mobile-light.jpg')] md:bg-[url('/images/bg-desktop-light.jpg')]")
+        prop.className (
+          "h-[200px] md:h-[300px] bg-no-repeat bg-cover "
+          + if isDark then
+              "bg-[url('/images/bg-mobile-dark.jpg')] md:bg-[url('/images/bg-desktop-dark.jpg')]"
+            else
+              "bg-[url('/images/bg-mobile-light.jpg')] md:bg-[url('/images/bg-desktop-light.jpg')]"
+        )
       ]
       Html.main [
         prop.className "relative px-6 md:px-0 md:max-w-xl mx-auto -mt-36 md:-mt-48"
@@ -439,7 +442,12 @@ let view
                     prop.onClick (fun _ -> onToggleTheme ())
                     prop.children [
                       Html.img [
-                        prop.src (if isDark then "/images/icon-sun.svg" else "/images/icon-moon.svg")
+                        prop.src (
+                          if isDark then
+                            "/images/icon-sun.svg"
+                          else
+                            "/images/icon-moon.svg"
+                        )
                         prop.alt "Toggle theme"
                       ]
                     ]
@@ -452,7 +460,10 @@ let view
             prop.className "mb-6"
             prop.children [
               Html.form [
-                prop.className ("flex items-center gap-4 px-5 py-3.5 rounded-md transition-colors duration-300 " + if isDark then "bg-navy-900" else "bg-white")
+                prop.className (
+                  "flex items-center gap-4 px-5 py-3.5 rounded-md transition-colors duration-300 "
+                  + if isDark then "bg-navy-900" else "bg-white"
+                )
                 prop.onSubmit (fun ev ->
                   ev.preventDefault ()
                   AddTodo |> dispatch
@@ -460,14 +471,25 @@ let view
                 prop.children [
                   Html.button [
                     prop.type' "submit"
-                    prop.className ("cursor-pointer appearance-none p-0 w-6 h-6 aspect-square rounded-full flex items-center justify-center flex-shrink-0 border " + if isDark then "border-purple-800" else "border-gray-300")
-                    prop.style [
-                      style.minWidth 24
-                      style.minHeight 24
-                    ]
+                    prop.className (
+                      String.concat " " [
+                        "cursor-pointer appearance-none p-0 w-6 h-6 aspect-square rounded-full flex items-center justify-center flex-shrink-0 border"
+                        if isDark then
+                          "[--todo-circle-fill:var(--color-navy-900)] border-purple-800 hover:border-transparent hover:[background:linear-gradient(var(--todo-circle-fill),var(--todo-circle-fill))_padding-box,linear-gradient(135deg,var(--color-gradient-1-left),var(--color-gradient-1-right))_border-box]"
+                        else
+                          "[--todo-circle-fill:#fff] border-gray-300 hover:border-transparent hover:[background:linear-gradient(var(--todo-circle-fill),var(--todo-circle-fill))_padding-box,linear-gradient(135deg,var(--color-gradient-1-left),var(--color-gradient-1-right))_border-box]"
+                      ]
+                    )
+                    prop.style [style.minWidth 24; style.minHeight 24]
                   ]
                   Html.input [
-                    prop.className ("cursor-text w-full bg-transparent border-none outline-none focus:outline-none focus:ring-0 focus:border-none " + if isDark then "text-purple-300 placeholder:text-purple-700" else "text-navy-850 placeholder:text-gray-600")
+                    prop.className (
+                      "cursor-text w-full bg-transparent border-none outline-none focus:outline-none focus:ring-0 focus:border-none "
+                      + if isDark then
+                          "text-purple-300 placeholder:text-purple-700"
+                        else
+                          "text-navy-850 placeholder:text-gray-600"
+                    )
                     prop.value model.NewTodoText
                     prop.placeholder "Create a new todo..."
                     prop.onChange (NewTodoTextChanged >> dispatch)
@@ -478,7 +500,10 @@ let view
           ]
           listAndFooter
           Html.div [
-            prop.className ("md:hidden mt-4 p-4 rounded-md flex justify-center gap-4 shadow-xl transition-colors duration-300 " + if isDark then "bg-navy-900" else "bg-white")
+            prop.className (
+              "md:hidden mt-4 p-4 rounded-md flex justify-center gap-4 shadow-xl transition-colors duration-300 "
+              + if isDark then "bg-navy-900" else "bg-white"
+            )
             prop.children [
               filterButton ("All", All)
               filterButton ("Active", Active)
@@ -486,12 +511,18 @@ let view
             ]
           ]
           Html.p [
-            prop.className ("text-center text-sm mt-10 " + if isDark then "text-purple-700" else "text-gray-600")
+            prop.className (
+              "text-center text-sm mt-10 "
+              + if isDark then "text-purple-700" else "text-gray-600"
+            )
             prop.text "Drag and drop to reorder list"
           ]
           if user.IsSome then
             Html.p [
-              prop.className ("text-center text-sm mt-4 " + if isDark then "text-purple-700" else "text-gray-600")
+              prop.className (
+                "text-center text-sm mt-4 "
+                + if isDark then "text-purple-700" else "text-gray-600"
+              )
               prop.text $"Logged in as {user.Value.Email}"
             ]
         ]

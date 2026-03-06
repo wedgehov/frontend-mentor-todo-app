@@ -43,7 +43,8 @@ let requireTodoAuthorization
     (todoId: int)
     (operation: int -> Async<Result<'ok, AppError>>)
     : Async<Result<'ok, AppError>> =
-    requireUser ctx <| fun userId ->
+    requireUser ctx
+    <| fun userId ->
         asyncResult {
             let db = ctx.GetService<Entity.AppDbContext>()
             let! foundTodo =
@@ -61,16 +62,10 @@ let requireTodoAuthorization
             return! operation userId
         }
 
-let private toSharedUser (user: Entity.User) : User = {
-    Id = user.Id
-    Email = user.Email
-}
+let private toSharedUser (user: Entity.User) : User = { Id = user.Id; Email = user.Email }
 
 let private createPrincipal (email: string) (userId: int) =
-    let claims = [
-        Claim(ClaimTypes.Name, email)
-        Claim("UserId", userId.ToString())
-    ]
+    let claims = [ Claim(ClaimTypes.Name, email); Claim("UserId", userId.ToString()) ]
 
     let identity =
         ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme)
@@ -144,7 +139,8 @@ let private logout (ctx: HttpContext) () =
     }
 
 let private getCurrentUser (ctx: HttpContext) () =
-    requireUser ctx <| fun userId ->
+    requireUser ctx
+    <| fun userId ->
         asyncResult {
             let db = ctx.GetService<Entity.AppDbContext>()
             let! user =
@@ -167,5 +163,4 @@ let authApiImplementation (ctx: HttpContext) : IAuthApi =
         GetCurrentUser = getCurrentUser ctx
     }
 
-let authApiHandler: HttpHandler =
-    RemotingUtil.handlerFromApi authApiImplementation
+let authApiHandler: HttpHandler = RemotingUtil.handlerFromApi authApiImplementation

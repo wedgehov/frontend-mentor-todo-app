@@ -37,12 +37,18 @@ let seedDevelopmentData (db: AppDbContext) =
 let webApp: HttpHandler =
     choose [
         global.Auth.authApiHandler
-        routeStartsWith "/api/ITodoApi" >=> global.Auth.requiresAuthentication >=> global.Todos.todosApiHandler
+        routeStartsWith "/api/ITodoApi"
+        >=> global.Auth.requiresAuthentication
+        >=> global.Todos.todosApiHandler
 
         // Fallback for SPA routing
         fun next ctx ->
             let env = ctx.RequestServices.GetRequiredService<IWebHostEnvironment>()
-            let webRoot = if String.IsNullOrEmpty(env.WebRootPath) then Path.Combine(env.ContentRootPath, "wwwroot") else env.WebRootPath
+            let webRoot =
+                if String.IsNullOrEmpty(env.WebRootPath) then
+                    Path.Combine(env.ContentRootPath, "wwwroot")
+                else
+                    env.WebRootPath
             let path = Path.Combine(webRoot, "index.html")
             if File.Exists(path) then
                 htmlFile path next ctx

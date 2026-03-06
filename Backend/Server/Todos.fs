@@ -12,7 +12,11 @@ let private toSharedTodo (todo: Entity.Todo) : Todo = {
     Completed = todo.Completed
 }
 
-let private insertTodo (ctx: Microsoft.AspNetCore.Http.HttpContext) (userId: int) (textValue: string) =
+let private insertTodo
+    (ctx: Microsoft.AspNetCore.Http.HttpContext)
+    (userId: int)
+    (textValue: string)
+    =
     task {
         let db = ctx.GetService<Entity.AppDbContext>()
         let! lastTodo =
@@ -44,17 +48,11 @@ let private deleteTodo (ctx: Microsoft.AspNetCore.Http.HttpContext) (userId: int
         let! found =
             db.Todos.FirstOrDefaultAsync(fun t -> t.Id = id && t.UserId = userId)
             |> TaskResult.ofTask
-            |> TaskResult.bind (
-                Option.ofObj
-                >> Result.requireSome NotFound
-                >> TaskResult.ofResult
-            )
+            |> TaskResult.bind (Option.ofObj >> Result.requireSome NotFound >> TaskResult.ofResult)
 
         db.Todos.Remove(found) |> ignore
         let! toShift =
-            db.Todos
-                .Where(fun t -> t.UserId = userId && t.Position > found.Position)
-                .ToListAsync()
+            db.Todos.Where(fun t -> t.UserId = userId && t.Position > found.Position).ToListAsync()
             |> TaskResult.ofTask
 
         for shifted in toShift do
@@ -70,11 +68,7 @@ let private toggleTodo (ctx: Microsoft.AspNetCore.Http.HttpContext) (userId: int
         let! found =
             db.Todos.FirstOrDefaultAsync(fun t -> t.Id = id && t.UserId = userId)
             |> TaskResult.ofTask
-            |> TaskResult.bind (
-                Option.ofObj
-                >> Result.requireSome NotFound
-                >> TaskResult.ofResult
-            )
+            |> TaskResult.bind (Option.ofObj >> Result.requireSome NotFound >> TaskResult.ofResult)
 
         found.Completed <- not found.Completed
         let! _ = db.SaveChangesAsync()
@@ -116,7 +110,12 @@ let private clearCompleted (ctx: Microsoft.AspNetCore.Http.HttpContext) (userId:
 /// <param name="userId">Owner of the todo list being reordered.</param>
 /// <param name="todoId">Identifier of the todo item to move.</param>
 /// <param name="newPosition">Requested destination index (clamped to valid range).</param>
-let private moveTodo (ctx: Microsoft.AspNetCore.Http.HttpContext) (userId: int) (todoId: int) (newPosition: int) =
+let private moveTodo
+    (ctx: Microsoft.AspNetCore.Http.HttpContext)
+    (userId: int)
+    (todoId: int)
+    (newPosition: int)
+    =
     taskResult {
         let db = ctx.GetService<Entity.AppDbContext>()
         let! orderedTodos =
@@ -176,17 +175,18 @@ let private getTodos (ctx: Microsoft.AspNetCore.Http.HttpContext) (userId: int) 
         return todos |> Seq.map toSharedTodo |> List.ofSeq
     }
 
-let private createTodo (ctx: Microsoft.AspNetCore.Http.HttpContext) (userId: int) (payload: NewTodo) =
+let private createTodo
+    (ctx: Microsoft.AspNetCore.Http.HttpContext)
+    (userId: int)
+    (payload: NewTodo)
+    =
     asyncResult {
         do!
             payload.Text
             |> System.String.IsNullOrWhiteSpace
             |> Result.requireFalse (ValidationError "Todo text is required.")
 
-        let! created =
-            insertTodo ctx userId payload.Text
-            |> Async.AwaitTask
-            |> AsyncResult.ofAsync
+        let! created = insertTodo ctx userId payload.Text |> Async.AwaitTask |> AsyncResult.ofAsync
 
         return toSharedTodo created
     }
@@ -198,16 +198,16 @@ let private toggleTodoById (ctx: Microsoft.AspNetCore.Http.HttpContext) (userId:
     }
 
 let private deleteTodoById (ctx: Microsoft.AspNetCore.Http.HttpContext) (userId: int) (id: int) =
-    asyncResult {
-        do! deleteTodo ctx userId id |> Async.AwaitTask
-    }
+    asyncResult { do! deleteTodo ctx userId id |> Async.AwaitTask }
 
 let private clearCompletedTodos (ctx: Microsoft.AspNetCore.Http.HttpContext) (userId: int) =
-    asyncResult {
-        do! clearCompleted ctx userId |> Async.AwaitTask |> AsyncResult.ofAsync
-    }
+    asyncResult { do! clearCompleted ctx userId |> Async.AwaitTask |> AsyncResult.ofAsync }
 
-let private moveTodoByPosition (ctx: Microsoft.AspNetCore.Http.HttpContext) (userId: int) (payload: MoveTodoRequest) =
+let private moveTodoByPosition
+    (ctx: Microsoft.AspNetCore.Http.HttpContext)
+    (userId: int)
+    (payload: MoveTodoRequest)
+    =
     asyncResult {
         do!
             payload.NewPosition < 0
@@ -216,27 +216,22 @@ let private moveTodoByPosition (ctx: Microsoft.AspNetCore.Http.HttpContext) (use
         do! moveTodo ctx userId payload.TodoId payload.NewPosition |> Async.AwaitTask
     }
 
-let todoApiImplementation (ctx: Microsoft.AspNetCore.Http.HttpContext) : ITodoApi =
-    {
-        GetTodos =
-            fun () ->
-                Auth.requireUser ctx <| fun userId -> getTodos ctx userId
-        CreateTodo =
-            fun payload ->
-                Auth.requireUser ctx <| fun userId -> createTodo ctx userId payload
-        ToggleTodo =
-            fun id ->
-                Auth.requireTodoAuthorization ctx id <| fun userId -> toggleTodoById ctx userId id
-        DeleteTodo =
-            fun id ->
-                Auth.requireTodoAuthorization ctx id <| fun userId -> deleteTodoById ctx userId id
-        ClearCompleted =
-            fun () ->
-                Auth.requireUser ctx <| fun userId -> clearCompletedTodos ctx userId
-        MoveTodo =
-            fun payload ->
-                Auth.requireTodoAuthorization ctx payload.TodoId <| fun userId -> moveTodoByPosition ctx userId payload
-    }
+let todoApiImplementation (ctx: Microsoft.AspNetCore.Http.HttpContext) : ITodoApi = {
+    GetTodos = fun () -> Auth.requireUser ctx <| fun userId -> getTodos ctx userId
+    CreateTodo = fun payload -> Auth.requireUser ctx <| fun userId -> createTodo ctx userId payload
+    ToggleTodo =
+        fun id ->
+            Auth.requireTodoAuthorization ctx id
+            <| fun userId -> toggleTodoById ctx userId id
+    DeleteTodo =
+        fun id ->
+            Auth.requireTodoAuthorization ctx id
+            <| fun userId -> deleteTodoById ctx userId id
+    ClearCompleted = fun () -> Auth.requireUser ctx <| fun userId -> clearCompletedTodos ctx userId
+    MoveTodo =
+        fun payload ->
+            Auth.requireTodoAuthorization ctx payload.TodoId
+            <| fun userId -> moveTodoByPosition ctx userId payload
+}
 
-let todosApiHandler: HttpHandler =
-    RemotingUtil.handlerFromApi todoApiImplementation
+let todosApiHandler: HttpHandler = RemotingUtil.handlerFromApi todoApiImplementation

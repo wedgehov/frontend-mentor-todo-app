@@ -19,7 +19,7 @@ type Theme =
   | Dark
 
 let private parseTodoFilter (value: string) =
-  match value.ToLowerInvariant() with
+  match value.ToLowerInvariant () with
   | "all" -> Some TodosPage.All
   | "active" -> Some TodosPage.Active
   | "completed" -> Some TodosPage.Completed
@@ -36,7 +36,7 @@ let private todoFilterParam = customParam "filter" (Option.bind parseTodoFilter)
 let private themeStorageKey = "todo.theme"
 
 let private parseStoredTheme (value: string) =
-  match value.ToLowerInvariant() with
+  match value.ToLowerInvariant () with
   | "light" -> Some Light
   | "dark" -> Some Dark
   | _ -> None
@@ -85,10 +85,7 @@ type Msg =
   | RequestLogout
   | ToggleTheme
 
-type RouteData = {
-  Page: Page
-  TodoFilter: TodosPage.Filter option
-}
+type RouteData = {Page: Page; TodoFilter: TodosPage.Filter option}
 
 module Route =
   let toHashPath (page: Page) =
@@ -108,31 +105,16 @@ let private routeForPage (page: Page) (todosFilter: TodosPage.Filter) =
   | TodosPage userId -> Route.toTodosHashPath userId todosFilter
   | _ -> Route.toHashPath page
 
-let private defaultRoute = {
-  Page = LoginPage
-  TodoFilter = None
-}
+let private defaultRoute = {Page = LoginPage; TodoFilter = None}
 
 let pageParser =
   oneOf [
-    map (fun f -> {
-      Page = LoginPage
-      TodoFilter = f
-    }) (top <?> todoFilterParam)
+    map (fun f -> {Page = LoginPage; TodoFilter = f}) (top <?> todoFilterParam)
     map
-      (fun userId filter -> {
-        Page = TodosPage userId
-        TodoFilter = filter
-      })
+      (fun userId filter -> {Page = TodosPage userId; TodoFilter = filter})
       ((s "user" </> i32 </> s "todos") <?> todoFilterParam)
-    map (fun f -> {
-      Page = LoginPage
-      TodoFilter = f
-    }) ((s "login") <?> todoFilterParam)
-    map (fun f -> {
-      Page = RegisterPage
-      TodoFilter = f
-    }) ((s "register") <?> todoFilterParam)
+    map (fun f -> {Page = LoginPage; TodoFilter = f}) ((s "login") <?> todoFilterParam)
+    map (fun f -> {Page = RegisterPage; TodoFilter = f}) ((s "register") <?> todoFilterParam)
   ]
 
 let urlParser: Browser.Types.Location -> RouteData option = parseHash pageParser
@@ -148,7 +130,9 @@ let private guardPageForUser (requestedPage: Page) (user: User option) =
 let urlUpdate (result: RouteData option) (model: Model) : Model * Cmd<Msg> =
   let requestedRoute = result |> Option.defaultValue defaultRoute
   let requestedPage = requestedRoute.Page
-  let filterFromUrl = requestedRoute.TodoFilter |> Option.defaultValue TodosPage.All
+  let filterFromUrl =
+    requestedRoute.TodoFilter
+    |> Option.defaultValue TodosPage.All
   let actualPage =
     if model.AuthChecked then
       guardPageForUser requestedPage model.User
@@ -160,14 +144,11 @@ let urlUpdate (result: RouteData option) (model: Model) : Model * Cmd<Msg> =
     match actualPage with
     | LoginPage -> {model with Page = LoginPage; Login = LoginPage.init ()}
     | RegisterPage -> {model with Page = RegisterPage; Register = RegisterPage.init ()}
-    | TodosPage _ ->
-      {
-        model with
-          Page = actualPage
-          Todos = {model.Todos with Filter = filterFromUrl}
-      }
+    | TodosPage _ -> {model with Page = actualPage; Todos = {model.Todos with Filter = filterFromUrl}}
 
-  let shouldRedirect = model.AuthChecked && (result.IsNone || requestedPage <> actualPage)
+  let shouldRedirect =
+    model.AuthChecked
+    && (result.IsNone || requestedPage <> actualPage)
   let redirectCmd =
     if shouldRedirect then
       Navigation.newUrl (routeForPage actualPage filterFromUrl)
@@ -216,11 +197,7 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
       | Light -> Dark
       | Dark -> Light
 
-    {
-      model with
-        Theme = nextTheme
-    },
-    Cmd.OfFunc.perform persistTheme nextTheme (fun _ -> ThemePersisted)
+    {model with Theme = nextTheme}, Cmd.OfFunc.perform persistTheme nextTheme (fun _ -> ThemePersisted)
   | ThemeLoaded theme -> {model with Theme = theme}, Cmd.none
   | ThemePersisted -> model, Cmd.none
   | TodosMsg todosMsg ->
@@ -255,11 +232,11 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
     | LoginPage.LoginResult (Ok user) ->
       {
         model with
-          User = Some user
-          AuthChecked = true
-          Login = newLoginModel
-          LogoutError = None
-          IsLoggingOut = false
+            User = Some user
+            AuthChecked = true
+            Login = newLoginModel
+            LogoutError = None
+            IsLoggingOut = false
       },
       Cmd.batch [
         Cmd.map LoginMsg newLoginCmd
@@ -275,11 +252,11 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
     | RegisterPage.RegisterResult (Ok user) ->
       {
         model with
-          User = Some user
-          AuthChecked = true
-          Register = newRegisterModel
-          LogoutError = None
-          IsLoggingOut = false
+            User = Some user
+            AuthChecked = true
+            Register = newRegisterModel
+            LogoutError = None
+            IsLoggingOut = false
       },
       Cmd.batch [
         Cmd.map RegisterMsg newRegisterCmd
@@ -319,26 +296,18 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
     let (newTodosModel, _) = TodosPage.init ()
     {
       model with
-        User = None
-        AuthChecked = true
-        IsLoggingOut = false
-        LogoutError = None
-        Todos = newTodosModel
-        Login = LoginPage.init ()
-        Register = RegisterPage.init ()
+          User = None
+          AuthChecked = true
+          IsLoggingOut = false
+          LogoutError = None
+          Todos = newTodosModel
+          Login = LoginPage.init ()
+          Register = RegisterPage.init ()
     },
     Navigation.newUrl (Route.toHashPath LoginPage)
   | LogoutResult (Error err) ->
-    {
-      model with
-        IsLoggingOut = false
-        LogoutError = Some (Auth.appErrorToMessage err)
-    },
-    Cmd.none
-  | RequestLogout ->
-    {model with IsLoggingOut = true; LogoutError = None},
-    Auth.logout LogoutResult // Call logout API
-
+    {model with IsLoggingOut = false; LogoutError = Some (Auth.appErrorToMessage err)}, Cmd.none
+  | RequestLogout -> {model with IsLoggingOut = true; LogoutError = None}, Auth.logout LogoutResult // Call logout API
 
 // View
 let view (model: Model) (dispatch: Msg -> unit) =
@@ -353,12 +322,14 @@ let view (model: Model) (dispatch: Msg -> unit) =
       | RegisterPage -> RegisterPage.view model.Theme model.Register (RegisterMsg >> dispatch) onToggleTheme
       if model.LogoutError.IsSome then
         Html.div [
-          prop.className "fixed left-1/2 top-6 z-50 -translate-x-1/2 rounded-md bg-red-500 px-4 py-2 text-sm font-medium text-white shadow-lg"
+          prop.className
+            "fixed left-1/2 top-6 z-50 -translate-x-1/2 rounded-md bg-red-500 px-4 py-2 text-sm font-medium text-white shadow-lg"
           prop.text $"Logout failed: {model.LogoutError.Value}"
         ]
       if model.IsLoggingOut then
         Html.div [
-          prop.className "fixed left-1/2 top-20 z-50 -translate-x-1/2 rounded-md bg-navy-850 px-4 py-2 text-sm font-medium text-white shadow-lg"
+          prop.className
+            "fixed left-1/2 top-20 z-50 -translate-x-1/2 rounded-md bg-navy-850 px-4 py-2 text-sm font-medium text-white shadow-lg"
           prop.text "Logging out..."
         ]
     ]
