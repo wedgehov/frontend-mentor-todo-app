@@ -79,7 +79,7 @@ This project is a full-stack application built entirely with F# and modern web t
 
 ### What I learned
 
-One of the most interesting challenges in this project was implementing the drag-and-drop list reordering feature. I chose to handle the ordering by assigning an integer `position` to each todo item. When a user drags and drops an item, the application calculates the new position and performs an `O(n)` shift on the backend, incrementing or decrementing the positions of the affected rows. 
+One of the most interesting challenges in this project was implementing the drag-and-drop list reordering feature. I chose to handle the ordering by assigning an integer `position` to each todo item. When a user drags and drops an item, the application calculates the new position and performs an `O(n)` shift on the backend, incrementing or decrementing the positions of the affected rows.
 
 While this approach is straightforward and easy to reason about for a small-scale application, it presented some challenges in ensuring the UI state and the backend state remained perfectly synchronized during the drag-and-drop operation. I had to carefully align the index contract between the Elmish frontend and the Giraffe backend so that the final target index used by the UI reorder matched the `MoveTodo` API payload.
 
@@ -123,8 +123,8 @@ The easiest way to run the entire application stack is with Docker Compose.
     ```
 
 3.  Open your browser and navigate to:
-    -   Frontend: http://localhost:5173
-    -   Backend API health check: http://localhost:5199
+    -   Application: http://localhost:5199
+    -   Backend API health check: http://localhost:5199/health
 
 On the first run, the backend service will automatically apply database migrations and seed a test user. You can log in with the following credentials:
 - **Email:** `test@example.com`
