@@ -3,35 +3,14 @@ module App
 open Elmish
 open Elmish.React
 open Elmish.Navigation
-open Elmish.UrlParser
 open Feliz
 open Browser.Dom
 open Shared
-
-// Main model
-type Page =
-  | TodosPage of int
-  | LoginPage
-  | RegisterPage
+open Routing
 
 type Theme =
   | Light
   | Dark
-
-let private parseTodoFilter (value: string) =
-  match value.ToLowerInvariant () with
-  | "all" -> Some TodosPage.All
-  | "active" -> Some TodosPage.Active
-  | "completed" -> Some TodosPage.Completed
-  | _ -> None
-
-let private todoFilterToQueryValue (filter: TodosPage.Filter) =
-  match filter with
-  | TodosPage.All -> "all"
-  | TodosPage.Active -> "active"
-  | TodosPage.Completed -> "completed"
-
-let private todoFilterParam = customParam "filter" (Option.bind parseTodoFilter)
 
 let private themeStorageKey = "todo.theme"
 
@@ -85,39 +64,10 @@ type Msg =
   | RequestLogout
   | ToggleTheme
 
-type RouteData = {Page: Page; TodoFilter: TodosPage.Filter option}
-
-module Route =
-  let toHashPath (page: Page) =
-    match page with
-    | LoginPage -> "#/login"
-    | RegisterPage -> "#/register"
-    | TodosPage userId -> $"#/user/{userId}/todos"
-
-  let toTodosHashPath (userId: int) (filter: TodosPage.Filter) =
-    let basePath = toHashPath (TodosPage userId)
-    match filter with
-    | TodosPage.All -> basePath
-    | _ -> $"{basePath}?filter={todoFilterToQueryValue filter}"
-
 let private routeForPage (page: Page) (todosFilter: TodosPage.Filter) =
   match page with
-  | TodosPage userId -> Route.toTodosHashPath userId todosFilter
-  | _ -> Route.toHashPath page
-
-let private defaultRoute = {Page = LoginPage; TodoFilter = None}
-
-let pageParser =
-  oneOf [
-    map (fun f -> {Page = LoginPage; TodoFilter = f}) (top <?> todoFilterParam)
-    map
-      (fun userId filter -> {Page = TodosPage userId; TodoFilter = filter})
-      ((s "user" </> i32 </> s "todos") <?> todoFilterParam)
-    map (fun f -> {Page = LoginPage; TodoFilter = f}) ((s "login") <?> todoFilterParam)
-    map (fun f -> {Page = RegisterPage; TodoFilter = f}) ((s "register") <?> todoFilterParam)
-  ]
-
-let urlParser: Browser.Types.Location -> RouteData option = parseHash pageParser
+  | TodosPage userId -> toTodosHashPath userId todosFilter
+  | _ -> toHashPath page
 
 let private guardPageForUser (requestedPage: Page) (user: User option) =
   match requestedPage, user with
@@ -208,7 +158,7 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
         if model.Todos.Filter = filter then
           Cmd.none
         else
-          Navigation.newUrl (Route.toTodosHashPath userId filter)
+          Navigation.newUrl (toTodosHashPath userId filter)
       | _ -> Cmd.none
     // Check if this is a logout request from TodosPage
     match todosMsg with
@@ -240,7 +190,7 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
       },
       Cmd.batch [
         Cmd.map LoginMsg newLoginCmd
-        Navigation.newUrl (Route.toTodosHashPath user.Id model.Todos.Filter)
+        Navigation.newUrl (toTodosHashPath user.Id model.Todos.Filter)
       ]
     | _ -> {model with Login = newLoginModel}, Cmd.map LoginMsg newLoginCmd
 
@@ -260,7 +210,7 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
       },
       Cmd.batch [
         Cmd.map RegisterMsg newRegisterCmd
-        Navigation.newUrl (Route.toTodosHashPath user.Id model.Todos.Filter)
+        Navigation.newUrl (toTodosHashPath user.Id model.Todos.Filter)
       ]
     | _ -> {model with Register = newRegisterModel}, Cmd.map RegisterMsg newRegisterCmd
 
@@ -304,7 +254,7 @@ let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
           Login = LoginPage.init ()
           Register = RegisterPage.init ()
     },
-    Navigation.newUrl (Route.toHashPath LoginPage)
+    Navigation.newUrl (toHashPath LoginPage)
   | LogoutResult (Error err) ->
     {model with IsLoggingOut = false; LogoutError = Some (Auth.appErrorToMessage err)}, Cmd.none
   | RequestLogout -> {model with IsLoggingOut = true; LogoutError = None}, Auth.logout LogoutResult // Call logout API

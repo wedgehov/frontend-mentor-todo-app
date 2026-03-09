@@ -190,7 +190,7 @@ let view theme (model: Model) (dispatch: Msg -> unit) (onToggleTheme: unit -> un
                                 else
                                   "text-blue-500 hover:text-blue-600"
                             )
-                            prop.href "#/register"
+                            prop.href (Routing.toHashPath Routing.RegisterPage)
                             prop.text "Don't have an account? Create one"
                           ]
                         ]
